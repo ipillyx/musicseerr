@@ -1,69 +1,203 @@
-# MusicSeerr
+# 🎵 MusicSeerr
 
-Self-hosted music request app for pilly.uk. Search Spotify, request downloads, get Discord notifications.
+A self-hosted music request app — the Overseerr/Jellyseerr of music. Search Spotify, request downloads for your household, and stream via Navidrome or any Subsonic-compatible player.
+
+> Built as a Spotify replacement for home use. Family members search for music, click download, and it automatically appears in your music library.
+
+---
 
 ## Features
-- Register with invite code
-- Spotify search (tracks, albums, artists)
-- One-click download requests via spotDL
-- Live download queue with status
-- Discord notifications on complete/fail
-- Admin panel — manage users, change invite code
-- First registered user becomes admin automatically
 
-## Setup on NixOS
+- 🔍 **Spotify Search** — search tracks, albums and artists by name
+- 💿 **Full Album Downloads** — download entire albums in one click
+- 🎨 **Artist Browse** — click any artist to browse their full discography
+- ⬇️ **Auto Download** — uses yt-dlp with correct Spotify metadata and album art embedded
+- 🔄 **Navidrome Auto-Scan** — library scan triggered automatically after each download
+- 📊 **Discover Page** — personalised recommendations based on Last.fm listening history
+- 🔐 **Invite Code Registration** — users need an invite code to register (like MAM)
+- 👑 **Admin Panel** — manage users, daily limits, blacklist artists/tracks
+- 🚫 **Blacklist** — block specific artists or tracks from being downloaded
+- 📈 **Daily Request Limits** — per-user configurable download limits
+- 🔁 **Retry Failed Downloads** — one-click retry on failed tracks
+- 🔔 **Discord Notifications** — webhook alerts when downloads complete or fail
+- 📱 **PWA Support** — installable on iOS and Android home screen
+- 🌙 **Dark Green Theme** — clean dark UI
 
-### 1. Copy files to NixOS host
-Copy the entire `musicseerr` folder to `/home/shaun/docker/musicseerr/` via WinSCP.
+---
 
-### 2. Create your .env
+## Requirements
+
+- Docker and Docker Compose
+- A **Spotify Developer** account (free) — for searching music
+- A music folder accessible to the container
+- Optionally: Navidrome for streaming, Last.fm for recommendations
+
+---
+
+## Quick Start
+
+### 1. Clone the repo
+
 ```bash
-cd /home/shaun/docker/musicseerr
-cp .env.example .env
-nano .env   # or edit via WinSCP/VS Code
+git clone https://github.com/ipillyx/musicseerr.git
+cd musicseerr
 ```
 
-Fill in:
-- `SECRET_KEY` — any random string (e.g. run `openssl rand -hex 32`)
-- `INVITE_CODE` — the code you give to family to register
-- `SPOTIFY_CLIENT_ID` / `SPOTIFY_CLIENT_SECRET` — from developer.spotify.com
-- `DISCORD_WEBHOOK` — from your Discord server webhooks
+### 2. Create your `.env` file
 
-### 3. Build and start
 ```bash
-cd /home/shaun/docker/musicseerr
+cp .env.example .env
+nano .env
+```
+
+### 3. Fill in your `.env`
+
+```env
+# Required
+SECRET_KEY=your-random-secret-key
+INVITE_CODE=YOURCODE
+SPOTIFY_CLIENT_ID=your-spotify-client-id
+SPOTIFY_CLIENT_SECRET=your-spotify-client-secret
+MUSICSEERR_PORT=8810
+
+# Optional — Discord notifications
+DISCORD_WEBHOOK=https://discord.com/api/webhooks/your/webhook
+
+# Optional — Navidrome auto-scan after downloads
+NAVIDROME_URL=http://your-navidrome-ip:4533
+NAVIDROME_USER=admin
+NAVIDROME_PASS=your-navidrome-password
+
+# Optional — Last.fm personalised recommendations
+LASTFM_API_KEY=your-lastfm-api-key
+LASTFM_USER=your-lastfm-username
+
+# Optional — daily request limit per user (default: 50)
+MAX_DAILY_REQUESTS=50
+```
+
+### 4. Set your music folder path
+
+Edit `docker-compose.yml` and update the music volume to point to your music folder:
+
+```yaml
+volumes:
+  - musicseerr-data:/data
+  - /path/to/your/music:/music    # ← change this
+```
+
+### 5. Build and start
+
+```bash
 docker compose up -d --build
 ```
 
-First build takes ~5 minutes (installs ffmpeg, spotDL, Node modules).
+First build takes around 5 minutes — it installs ffmpeg, yt-dlp and all dependencies.
 
-### 4. NPM Proxy Host
-In Nginx Proxy Manager, add:
-- Domain: `music.pilly.uk`
-- Forward Hostname: `10.1.1.161`
-- Forward Port: `8810`
-- WebSockets: enabled
-- SSL: Let's Encrypt
+### 6. Open in your browser
 
-### 5. First login
-- Go to `https://music.pilly.uk/register`
-- Register — first user is automatically admin
-- Share your `INVITE_CODE` with family so they can register
+```
+http://your-server-ip:8810
+```
+
+- Go to `/register` and create your account — **first registered user is automatically admin**
+- Share your `INVITE_CODE` with family/household so they can register
+
+---
+
+## Spotify API Setup
+
+MusicSeerr needs a Spotify API key to search for music. It is free and takes 2 minutes:
+
+1. Go to [developer.spotify.com/dashboard](https://developer.spotify.com/dashboard)
+2. Click **Create App**
+3. Fill in any name, set the redirect URI to `http://localhost`
+4. Copy your **Client ID** and **Client Secret** into `.env`
+
+---
+
+## Navidrome Integration
+
+When `NAVIDROME_URL`, `NAVIDROME_USER` and `NAVIDROME_PASS` are set, MusicSeerr will automatically trigger a Navidrome library scan after each successful download so tracks appear in your player immediately without needing a manual scan.
+
+---
+
+## Last.fm Recommendations
+
+Set `LASTFM_API_KEY` and `LASTFM_USER` to unlock the **Discover** page:
+
+| Tab | Description |
+|-----|-------------|
+| ✨ For You | Tracks from similar artists based on your Last.fm listening history |
+| 🎵 Recent Plays | Your recent scrobble history |
+| 📊 Your Stats | Top tracks and artists by time period (7 days → all time) |
+| 🆕 Library | Recently downloaded to your library |
+| 🔥 Trending | Most requested tracks across all users |
+
+Get a free Last.fm API key at [last.fm/api/account/create](https://www.last.fm/api/account/create).
+
+---
+
+## File Organisation
+
+Downloads are saved as:
+
+```
+/music/Artist Name/Album Name/Track Name.mp3
+```
+
+Metadata (title, artist, album, artwork) is embedded using Spotify data so your library is correctly tagged.
+
+---
+
+## Admin Features
+
+| Feature | Description |
+|---------|-------------|
+| User management | View and remove users |
+| Daily limits | Set per-user daily download limits |
+| Blacklist | Block artists or track names from being downloaded |
+| Clear history | Bulk delete completed/failed download history |
+| Navidrome scan | Manually trigger a library scan |
+| Invite code | Change the registration invite code |
+
+---
+
+## Reverse Proxy
+
+To expose MusicSeerr publicly (e.g. `music.yourdomain.com`), add a proxy host in Nginx Proxy Manager or Traefik pointing to port `8810`. Enable WebSocket support.
+
+---
 
 ## Updating
+
 ```bash
-cd /home/shaun/docker/musicseerr
+git pull
 docker compose down
 docker compose up -d --build
 ```
 
-## Discord Webhook Setup
-1. Open your Discord server
-2. Go to a channel > Edit Channel > Integrations > Webhooks
-3. Create Webhook, copy URL
-4. Paste into `.env` as `DISCORD_WEBHOOK`
+---
 
-Notifications sent:
-- 📥 New request queued
-- ✅ Download completed
-- ❌ Download failed
+## Stack
+
+| Component | Technology |
+|-----------|------------|
+| Backend | FastAPI + SQLite |
+| Frontend | React + Vite |
+| Downloads | yt-dlp |
+| Metadata | Spotify API + mutagen |
+| Recommendations | Last.fm API |
+| Deployment | Docker Compose |
+
+---
+
+## Contributing
+
+PRs and issues welcome!
+
+---
+
+## License
+
+MIT
