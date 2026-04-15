@@ -613,7 +613,7 @@ def manual_scan(user=Depends(get_current_user)):
 
 # --- Last.fm Recommendations ---
 LASTFM_API_KEY = os.getenv("LASTFM_API_KEY", "")
-LASTFM_USER = os.getenv("LASTFM_USER", "ipillyx")
+LASTFM_USER = os.getenv("LASTFM_USER", "")
 LASTFM_BASE = "http://ws.audioscrobbler.com/2.0/"
 
 def lastfm_get(method, params={}):
