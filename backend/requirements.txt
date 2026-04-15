@@ -1,0 +1,9 @@
+fastapi
+uvicorn
+pyjwt
+bcrypt
+httpx
+spotipy
+yt-dlp
+pydantic
+mutagen

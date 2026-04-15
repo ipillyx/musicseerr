@@ -1,0 +1,44 @@
+services:
+  backend:
+    build: ./backend
+    container_name: musicseerr-backend
+    restart: unless-stopped
+    environment:
+      - SECRET_KEY=${SECRET_KEY}
+      - INVITE_CODE=${INVITE_CODE}
+      - SPOTIFY_CLIENT_ID=${SPOTIFY_CLIENT_ID}
+      - SPOTIFY_CLIENT_SECRET=${SPOTIFY_CLIENT_SECRET}
+      - DISCORD_WEBHOOK=${DISCORD_WEBHOOK}
+      - MUSIC_PATH=/music
+      - LASTFM_API_KEY=${LASTFM_API_KEY}
+      - LASTFM_USER=${LASTFM_USER}
+      - NAVIDROME_URL=${NAVIDROME_URL}
+      - NAVIDROME_USER=${NAVIDROME_USER}
+      - NAVIDROME_PASS=${NAVIDROME_PASS}
+      - MAX_DAILY_REQUESTS=${MAX_DAILY_REQUESTS}
+    volumes:
+      - musicseerr-data:/data
+      - /mnt/media/music:/music
+    networks:
+      - internal
+
+  frontend:
+    build: ./frontend
+    container_name: musicseerr-frontend
+    restart: unless-stopped
+    ports:
+      - "${MUSICSEERR_PORT:-8810}:80"
+    depends_on:
+      - backend
+    networks:
+      - internal
+      - proxy
+
+networks:
+  internal:
+    driver: bridge
+  proxy:
+    external: true
+
+volumes:
+  musicseerr-data:
