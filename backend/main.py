@@ -211,6 +211,13 @@ def process_download_queue():
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     init_db()
+    # Recover any queued downloads from previous sessions
+    conn = get_db()
+    pending = conn.execute("SELECT id FROM downloads WHERE status = 'queued'").fetchall()
+    conn.close()
+    for row in pending:
+        download_queue.put(row['id'])
+    print(f'[STARTUP] Recovered {len(pending)} queued downloads', flush=True)
     worker = threading.Thread(target=process_download_queue, daemon=True)
     worker.start()
     yield
@@ -743,27 +750,6 @@ def get_lastfm_recent(user=Depends(get_current_user)):
     except:
         pass
     return {"tracks": tracks}
-
-
-# --- Public stats endpoint for Homepage widget ---
-@app.get("/api/public/stats")
-def public_stats():
-    conn = get_db()
-    total = conn.execute("SELECT COUNT(*) as c FROM downloads").fetchone()["c"]
-    completed = conn.execute("SELECT COUNT(*) as c FROM downloads WHERE status = 'completed'").fetchone()["c"]
-    queued = conn.execute("SELECT COUNT(*) as c FROM downloads WHERE status IN ('queued', 'downloading')").fetchone()["c"]
-    failed = conn.execute("SELECT COUNT(*) as c FROM downloads WHERE status = 'failed'").fetchone()["c"]
-    users = conn.execute("SELECT COUNT(*) as c FROM users").fetchone()["c"]
-    last = conn.execute("SELECT track_name, artist FROM downloads WHERE status = 'completed' ORDER BY completed_at DESC LIMIT 1").fetchone()
-    conn.close()
-    return {
-        "total": total,
-        "completed": completed,
-        "queued": queued,
-        "failed": failed,
-        "users": users,
-        "last_download": f"{last['artist']} — {last['track_name']}" if last else "None"
-    }
 
 
 # --- Public stats endpoint for Homepage widget ---
