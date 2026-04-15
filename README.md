@@ -34,6 +34,12 @@ A self-hosted music request app — the Overseerr/Jellyseerr of music. Search Sp
 
 ---
 
+## Screenshots
+
+![Search](screenshots/search.png)
+![Downloads](screenshots/downloads.png)
+![Discover](screenshots/discover.png)
+
 ## Quick Start
 
 ### 1. Clone the repo
