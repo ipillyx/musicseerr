@@ -1,107 +1,98 @@
 import { useState } from 'react'
-import { Link, useNavigate } from 'react-router-dom'
+import { useNavigate, Link } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
 
-const API = import.meta.env.VITE_API_URL || ''
-
 export default function Login() {
+  const { login } = useAuth()
+  const navigate = useNavigate()
   const [form, setForm] = useState({ username: '', password: '' })
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
-  const { login } = useAuth()
-  const navigate = useNavigate()
 
-  const submit = async (e) => {
-    e.preventDefault()
-    setError('')
+  const handleSubmit = async () => {
+    if (!form.username || !form.password) return setError('Please fill in all fields')
     setLoading(true)
+    setError('')
     try {
-      const res = await fetch(`${API}/api/auth/login`, {
+      const res = await fetch('/api/auth/login', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(form)
+        body: JSON.stringify({ username: form.username, password: form.password })
       })
       const data = await res.json()
       if (!res.ok) throw new Error(data.detail || 'Login failed')
       login(data.token, { username: data.username, is_admin: data.is_admin })
       navigate('/')
-    } catch (err) {
-      setError(err.message)
-    } finally {
-      setLoading(false)
-    }
+    } catch (e) {
+      setError(e.message || 'Invalid username or password')
+    } finally { setLoading(false) }
+  }
+
+  const inputStyle = {
+    width: '100%', padding: '15px 16px',
+    background: 'rgba(255,255,255,0.05)', border: '1px solid var(--border)',
+    borderRadius: 14, color: 'var(--text)', fontSize: 16,
+    outline: 'none', fontFamily: 'DM Sans', WebkitAppearance: 'none',
+    transition: 'border-color 0.2s'
   }
 
   return (
     <div style={{
-      minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center',
-      background: 'var(--bg)',
-      backgroundImage: 'radial-gradient(ellipse at 20% 50%, rgba(30,215,96,0.04) 0%, transparent 60%), radial-gradient(ellipse at 80% 20%, rgba(30,215,96,0.03) 0%, transparent 50%)'
+      minHeight: '100vh', display: 'flex', flexDirection: 'column',
+      alignItems: 'center', justifyContent: 'center',
+      background: 'var(--bg)', padding: '24px 24px', maxWidth: 500, margin: '0 auto'
     }}>
-      <div style={{ width: '100%', maxWidth: 380, padding: '0 24px', animation: 'fadeUp 0.4s ease' }}>
-        {/* Logo */}
-        <div style={{ textAlign: 'center', marginBottom: 40 }}>
-          <div style={{ fontSize: 40, marginBottom: 8 }}>🎵</div>
-          <h1 style={{ fontSize: 28, fontWeight: 800, letterSpacing: '-1px' }}>MusicSeerr</h1>
-          <p style={{ color: 'var(--text-muted)', fontSize: 13, fontFamily: 'DM Mono', marginTop: 4 }}>pilly.uk music requests</p>
-        </div>
+      <div style={{ textAlign: 'center', marginBottom: 48 }}>
+        <div style={{
+          width: 72, height: 72, borderRadius: 22,
+          background: 'rgba(30,215,96,0.12)', border: '1px solid rgba(30,215,96,0.25)',
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+          fontSize: 36, margin: '0 auto 16px'
+        }}>🎵</div>
+        <div style={{ fontSize: 28, fontWeight: 800, color: 'var(--green)', letterSpacing: '-1px' }}>MusicSeerr</div>
+        <div style={{ fontSize: 13, color: 'var(--text-muted)', marginTop: 4 }}>pilly.uk music requests</div>
+      </div>
 
-        <form onSubmit={submit}>
-          <div style={{ marginBottom: 16 }}>
-            <label style={{ display: 'block', fontSize: 11, fontFamily: 'DM Mono', color: 'var(--text-muted)', marginBottom: 6, textTransform: 'uppercase', letterSpacing: 1 }}>Username</label>
-            <input
-              type="text" value={form.username} onChange={e => setForm({ ...form, username: e.target.value })}
-              required autoFocus
-              style={{
-                width: '100%', padding: '12px 16px', background: 'var(--bg-2)',
-                border: '1px solid var(--border)', borderRadius: 8,
-                color: 'var(--text)', fontSize: 14, fontFamily: 'DM Mono',
-                transition: 'border-color 0.15s'
-              }}
-              onFocus={e => e.target.style.borderColor = 'var(--green)'}
-              onBlur={e => e.target.style.borderColor = 'var(--border)'}
-            />
+      <div style={{ width: '100%', display: 'flex', flexDirection: 'column', gap: 12 }}>
+        {error && (
+          <div style={{ background: 'rgba(233,68,68,0.1)', border: '1px solid rgba(233,68,68,0.3)', borderRadius: 12, padding: '12px 16px', fontSize: 13, color: 'var(--red)', textAlign: 'center' }}>
+            {error}
           </div>
+        )}
+        <input
+          placeholder="Username"
+          value={form.username}
+          onChange={e => setForm({ ...form, username: e.target.value })}
+          onKeyDown={e => e.key === 'Enter' && handleSubmit()}
+          style={inputStyle}
+          onFocus={e => e.target.style.borderColor = 'var(--green)'}
+          onBlur={e => e.target.style.borderColor = 'var(--border)'}
+          autoCapitalize="none"
+        />
+        <input
+          type="password"
+          placeholder="Password"
+          value={form.password}
+          onChange={e => setForm({ ...form, password: e.target.value })}
+          onKeyDown={e => e.key === 'Enter' && handleSubmit()}
+          style={inputStyle}
+          onFocus={e => e.target.style.borderColor = 'var(--green)'}
+          onBlur={e => e.target.style.borderColor = 'var(--border)'}
+        />
+        <button onClick={handleSubmit} disabled={loading} style={{
+          width: '100%', padding: '16px',
+          background: 'var(--green)', color: '#000',
+          borderRadius: 14, fontSize: 16, fontWeight: 800,
+          border: 'none', cursor: 'pointer', marginTop: 4,
+          display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8
+        }}>
+          {loading ? <div className="spinner" style={{ width: 20, height: 20 }} /> : 'Sign In'}
+        </button>
+      </div>
 
-          <div style={{ marginBottom: 24 }}>
-            <label style={{ display: 'block', fontSize: 11, fontFamily: 'DM Mono', color: 'var(--text-muted)', marginBottom: 6, textTransform: 'uppercase', letterSpacing: 1 }}>Password</label>
-            <input
-              type="password" value={form.password} onChange={e => setForm({ ...form, password: e.target.value })}
-              required
-              style={{
-                width: '100%', padding: '12px 16px', background: 'var(--bg-2)',
-                border: '1px solid var(--border)', borderRadius: 8,
-                color: 'var(--text)', fontSize: 14, fontFamily: 'DM Mono',
-                transition: 'border-color 0.15s'
-              }}
-              onFocus={e => e.target.style.borderColor = 'var(--green)'}
-              onBlur={e => e.target.style.borderColor = 'var(--border)'}
-            />
-          </div>
-
-          {error && (
-            <div style={{ background: 'rgba(233,68,68,0.1)', border: '1px solid rgba(233,68,68,0.3)', borderRadius: 6, padding: '10px 14px', marginBottom: 16, fontSize: 13, color: 'var(--red)' }}>
-              {error}
-            </div>
-          )}
-
-          <button type="submit" disabled={loading} style={{
-            width: '100%', padding: '13px', background: 'var(--green)',
-            color: '#000', fontSize: 14, fontWeight: 700, borderRadius: 8,
-            transition: 'all 0.15s', letterSpacing: 0.5,
-            opacity: loading ? 0.7 : 1
-          }}
-            onMouseEnter={e => !loading && (e.currentTarget.style.background = '#22f06a')}
-            onMouseLeave={e => e.currentTarget.style.background = 'var(--green)'}
-          >
-            {loading ? 'Signing in...' : 'Sign In'}
-          </button>
-        </form>
-
-        <p style={{ textAlign: 'center', marginTop: 20, fontSize: 13, color: 'var(--text-muted)' }}>
-          No account?{' '}
-          <Link to="/register" style={{ color: 'var(--green)', fontWeight: 600 }}>Register with invite code</Link>
-        </p>
+      <div style={{ marginTop: 24, fontSize: 14, color: 'var(--text-muted)' }}>
+        Need an account?{' '}
+        <Link to="/register" style={{ color: 'var(--green)', fontWeight: 600, textDecoration: 'none' }}>Register</Link>
       </div>
     </div>
   )
