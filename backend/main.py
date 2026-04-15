@@ -8,6 +8,11 @@ from pydantic import BaseModel
 from typing import Optional
 import spotipy
 from spotipy.oauth2 import SpotifyClientCredentials
+try:
+    from ytmusicapi import YTMusic
+    ytmusic = YTMusic()
+except:
+    ytmusic = None
 
 DB_PATH = "/data/musicseerr.db"
 SECRET_KEY = os.getenv("SECRET_KEY", "changeme-secret-key")
@@ -154,7 +159,12 @@ def process_download_queue():
             album_folder = row["album"] if row["album"] else "Unknown"
             dest_dir = MUSIC_PATH + "/" + artist_folder + "/" + album_folder
             output_template = dest_dir + "/%(title)s.%(ext)s"
-            search_query = "ytsearch1:" + row["artist"] + " - " + row["track_name"]
+            # Use direct URL for YouTube Music results, search for Spotify results
+            uri = row["spotify_uri"]
+            if uri.startswith("https://www.youtube.com/") or uri.startswith("https://youtu.be/"):
+                search_query = uri
+            else:
+                search_query = "ytsearch1:" + row["artist"] + " - " + row["track_name"]
 
             os.makedirs(dest_dir, exist_ok=True)
 
@@ -617,6 +627,43 @@ def manual_scan(user=Depends(get_current_user)):
     threading.Thread(target=trigger_navidrome_scan, daemon=True).start()
     return {"message": "Navidrome scan triggered"}
 
+
+
+
+# --- YouTube Music Search ---
+@app.get("/api/search/ytmusic")
+def search_ytmusic(q: str, user=Depends(get_current_user)):
+    if not ytmusic:
+        raise HTTPException(status_code=503, detail="YouTube Music not available")
+    try:
+        results = ytmusic.search(q, limit=20)
+        items = []
+        for r in results:
+            if r.get("resultType") not in ("song", "video"):
+                continue
+            video_id = r.get("videoId")
+            if not video_id:
+                continue
+            thumbnails = r.get("thumbnails", [])
+            thumb = thumbnails[-1]["url"] if thumbnails else None
+            artists = r.get("artists", [])
+            artist = ", ".join(a["name"] for a in artists) if artists else "Unknown"
+            album = r.get("album", {})
+            album_name = album.get("name", "") if album else ""
+            duration = r.get("duration", "")
+            items.append({
+                "uri": f"https://www.youtube.com/watch?v={video_id}",
+                "video_id": video_id,
+                "name": r.get("title", "Unknown"),
+                "artist": artist,
+                "album": album_name,
+                "album_art": thumb,
+                "duration": duration,
+                "type": "ytmusic"
+            })
+        return {"results": items}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 # --- Last.fm Recommendations ---
 LASTFM_API_KEY = os.getenv("LASTFM_API_KEY", "")
