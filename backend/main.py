@@ -743,3 +743,45 @@ def get_lastfm_recent(user=Depends(get_current_user)):
     except:
         pass
     return {"tracks": tracks}
+
+
+# --- Public stats endpoint for Homepage widget ---
+@app.get("/api/public/stats")
+def public_stats():
+    conn = get_db()
+    total = conn.execute("SELECT COUNT(*) as c FROM downloads").fetchone()["c"]
+    completed = conn.execute("SELECT COUNT(*) as c FROM downloads WHERE status = 'completed'").fetchone()["c"]
+    queued = conn.execute("SELECT COUNT(*) as c FROM downloads WHERE status IN ('queued', 'downloading')").fetchone()["c"]
+    failed = conn.execute("SELECT COUNT(*) as c FROM downloads WHERE status = 'failed'").fetchone()["c"]
+    users = conn.execute("SELECT COUNT(*) as c FROM users").fetchone()["c"]
+    last = conn.execute("SELECT track_name, artist FROM downloads WHERE status = 'completed' ORDER BY completed_at DESC LIMIT 1").fetchone()
+    conn.close()
+    return {
+        "total": total,
+        "completed": completed,
+        "queued": queued,
+        "failed": failed,
+        "users": users,
+        "last_download": f"{last['artist']} — {last['track_name']}" if last else "None"
+    }
+
+
+# --- Public stats endpoint for Homepage widget ---
+@app.get("/api/public/stats")
+def public_stats():
+    conn = get_db()
+    total = conn.execute("SELECT COUNT(*) as c FROM downloads").fetchone()["c"]
+    completed = conn.execute("SELECT COUNT(*) as c FROM downloads WHERE status = 'completed'").fetchone()["c"]
+    queued = conn.execute("SELECT COUNT(*) as c FROM downloads WHERE status IN ('queued', 'downloading')").fetchone()["c"]
+    failed = conn.execute("SELECT COUNT(*) as c FROM downloads WHERE status = 'failed'").fetchone()["c"]
+    users = conn.execute("SELECT COUNT(*) as c FROM users").fetchone()["c"]
+    last = conn.execute("SELECT track_name, artist FROM downloads WHERE status = 'completed' ORDER BY completed_at DESC LIMIT 1").fetchone()
+    conn.close()
+    return {
+        "total": total,
+        "completed": completed,
+        "queued": queued,
+        "failed": failed,
+        "users": users,
+        "last_download": f"{last['artist']} — {last['track_name']}" if last else "None"
+    }
