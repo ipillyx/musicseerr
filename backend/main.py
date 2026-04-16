@@ -665,6 +665,41 @@ def search_ytmusic(q: str, user=Depends(get_current_user)):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+
+
+# --- SoundCloud Search ---
+@app.get("/api/search/soundcloud")
+def search_soundcloud(q: str, user=Depends(get_current_user)):
+    try:
+        # Use yt-dlp to search SoundCloud
+        import subprocess, json
+        cmd = [
+            "yt-dlp", "--dump-json", "--no-download",
+            "--flat-playlist", f"scsearch10:{q}"
+        ]
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+        items = []
+        for line in result.stdout.strip().split("\n"):
+            if not line.strip():
+                continue
+            try:
+                r = json.loads(line)
+                items.append({
+                    "uri": r.get("url") or r.get("webpage_url", ""),
+                    "video_id": r.get("id", ""),
+                    "name": r.get("title", "Unknown"),
+                    "artist": r.get("uploader", "Unknown"),
+                    "album": "",
+                    "album_art": r.get("thumbnail", None),
+                    "duration": str(int(r.get("duration", 0) or 0) // 60) + ":" + str(int(r.get("duration", 0) or 0) % 60).zfill(2) if r.get("duration") else "",
+                    "type": "soundcloud"
+                })
+            except:
+                continue
+        return {"results": items}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
 # --- Last.fm Recommendations ---
 LASTFM_API_KEY = os.getenv("LASTFM_API_KEY", "")
 LASTFM_USER = os.getenv("LASTFM_USER", "")
