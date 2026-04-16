@@ -700,6 +700,192 @@ def search_soundcloud(q: str, user=Depends(get_current_user)):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+
+
+# --- Playlist Import ---
+class PlaylistImportRequest(BaseModel):
+    url: str
+
+@app.post("/api/playlists/fetch")
+def fetch_playlist(req: PlaylistImportRequest, user=Depends(get_current_user)):
+    """Fetch tracks from a Spotify or YouTube playlist URL without downloading."""
+    url = req.url.strip()
+    tracks = []
+
+    # Detect Spotify playlist
+    if "spotify.com/playlist/" in url:
+        try:
+            sp = get_spotify()
+            playlist_id = url.split("playlist/")[1].split("?")[0]
+            result = sp.playlist(playlist_id)
+            playlist_name = result["name"]
+            items = result["tracks"]["items"]
+            next_url = result["tracks"]["next"]
+            while next_url:
+                more = sp.next(result["tracks"])
+                items.extend(more["items"])
+                next_url = more["next"]
+                result["tracks"] = more
+            for item in items:
+                t = item.get("track")
+                if not t or not t.get("uri"):
+                    continue
+                tracks.append({
+                    "uri": t["uri"],
+                    "name": t["name"],
+                    "artist": ", ".join(a["name"] for a in t["artists"]),
+                    "album": t["album"]["name"],
+                    "album_art": t["album"]["images"][0]["url"] if t["album"]["images"] else None,
+                    "source": "spotify"
+                })
+            return {"playlist_name": playlist_name, "tracks": tracks, "source": "spotify"}
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=f"Spotify error: {str(e)}")
+
+    # Detect YouTube playlist
+    elif "youtube.com/playlist" in url or "list=" in url:
+        try:
+            import subprocess, json
+            cmd = ["yt-dlp", "--dump-json", "--no-download", "--flat-playlist", url]
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
+            playlist_name = "YouTube Playlist"
+            for line in result.stdout.strip().split("\n"):
+                if not line.strip():
+                    continue
+                try:
+                    r = json.loads(line)
+                    if r.get("_type") == "playlist":
+                        playlist_name = r.get("title", playlist_name)
+                        continue
+                    video_id = r.get("id", "")
+                    thumbnails = r.get("thumbnails", [])
+                    thumb = thumbnails[-1]["url"] if thumbnails else None
+                    duration_secs = r.get("duration") or 0
+                    duration = f"{int(duration_secs)//60}:{str(int(duration_secs)%60).zfill(2)}" if duration_secs else ""
+                    tracks.append({
+                        "uri": f"https://www.youtube.com/watch?v={video_id}",
+                        "name": r.get("title", "Unknown"),
+                        "artist": r.get("uploader", r.get("channel", "Unknown")),
+                        "album": playlist_name,
+                        "album_art": thumb,
+                        "duration": duration,
+                        "source": "youtube"
+                    })
+                except:
+                    continue
+            return {"playlist_name": playlist_name, "tracks": tracks, "source": "youtube"}
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=f"YouTube error: {str(e)}")
+
+    else:
+        raise HTTPException(status_code=400, detail="Unsupported URL. Please use a Spotify or YouTube playlist URL.")
+
+@app.post("/api/playlists/download")
+def download_playlist(req: PlaylistImportRequest, user=Depends(get_current_user)):
+    """Fetch and immediately queue all tracks from a playlist."""
+    url = req.url.strip()
+    conn = get_db()
+
+    # Check daily limit
+    if not user["is_admin"]:
+        user_row = conn.execute("SELECT daily_limit FROM users WHERE id = ?", (user["id"],)).fetchone()
+        limit = user_row["daily_limit"] if user_row else MAX_DAILY_REQUESTS
+        daily_count = get_daily_count(conn, user["id"])
+        if daily_count >= limit:
+            conn.close()
+            raise HTTPException(status_code=429, detail=f"Daily limit of {limit} reached.")
+
+    queued = 0
+    skipped = 0
+
+    if "spotify.com/playlist/" in url:
+        try:
+            sp = get_spotify()
+            playlist_id = url.split("playlist/")[1].split("?")[0]
+            result = sp.playlist(playlist_id)
+            playlist_name = result["name"]
+            items = result["tracks"]["items"]
+            next_url = result["tracks"]["next"]
+            while next_url:
+                more = sp.next(result["tracks"])
+                items.extend(more["items"])
+                next_url = more["next"]
+                result["tracks"] = more
+            for item in items:
+                t = item.get("track")
+                if not t or not t.get("uri"):
+                    continue
+                if is_blacklisted(conn, t["name"], ", ".join(a["name"] for a in t["artists"])):
+                    continue
+                existing = conn.execute(
+                    "SELECT id FROM downloads WHERE spotify_uri = ? AND status IN ('queued','downloading','completed')",
+                    (t["uri"],)
+                ).fetchone()
+                if existing:
+                    skipped += 1
+                    continue
+                album_art = t["album"]["images"][0]["url"] if t["album"]["images"] else None
+                cursor = conn.execute(
+                    "INSERT INTO downloads (user_id, spotify_uri, track_name, artist, album, album_art) VALUES (?,?,?,?,?,?)",
+                    (user["id"], t["uri"], t["name"], ", ".join(a["name"] for a in t["artists"]), t["album"]["name"], album_art)
+                )
+                conn.commit()
+                download_queue.put(cursor.lastrowid)
+                queued += 1
+            conn.close()
+            send_discord(f"📋 **Playlist Import:** {playlist_name} ({queued} tracks queued, {skipped} skipped)")
+            return {"message": f"Queued {queued} tracks", "queued": queued, "skipped": skipped, "playlist_name": playlist_name}
+        except Exception as e:
+            conn.close()
+            raise HTTPException(status_code=400, detail=str(e))
+
+    elif "youtube.com/playlist" in url or "list=" in url:
+        try:
+            import subprocess, json
+            cmd = ["yt-dlp", "--dump-json", "--no-download", "--flat-playlist", url]
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
+            playlist_name = "YouTube Playlist"
+            for line in result.stdout.strip().split("\n"):
+                if not line.strip():
+                    continue
+                try:
+                    r = json.loads(line)
+                    if r.get("_type") == "playlist":
+                        playlist_name = r.get("title", playlist_name)
+                        continue
+                    video_id = r.get("id", "")
+                    yt_url = f"https://www.youtube.com/watch?v={video_id}"
+                    existing = conn.execute(
+                        "SELECT id FROM downloads WHERE spotify_uri = ? AND status IN ('queued','downloading','completed')",
+                        (yt_url,)
+                    ).fetchone()
+                    if existing:
+                        skipped += 1
+                        continue
+                    thumbnails = r.get("thumbnails", [])
+                    thumb = thumbnails[-1]["url"] if thumbnails else None
+                    title = r.get("title", "Unknown")
+                    uploader = r.get("uploader", r.get("channel", "Unknown"))
+                    cursor = conn.execute(
+                        "INSERT INTO downloads (user_id, spotify_uri, track_name, artist, album, album_art) VALUES (?,?,?,?,?,?)",
+                        (user["id"], yt_url, title, uploader, playlist_name, thumb)
+                    )
+                    conn.commit()
+                    download_queue.put(cursor.lastrowid)
+                    queued += 1
+                except:
+                    continue
+            conn.close()
+            send_discord(f"📋 **YouTube Playlist:** {playlist_name} ({queued} tracks queued, {skipped} skipped)")
+            return {"message": f"Queued {queued} tracks", "queued": queued, "skipped": skipped, "playlist_name": playlist_name}
+        except Exception as e:
+            conn.close()
+            raise HTTPException(status_code=400, detail=str(e))
+
+    else:
+        conn.close()
+        raise HTTPException(status_code=400, detail="Unsupported URL.")
+
 # --- Last.fm Recommendations ---
 LASTFM_API_KEY = os.getenv("LASTFM_API_KEY", "")
 LASTFM_USER = os.getenv("LASTFM_USER", "")

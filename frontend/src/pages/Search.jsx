@@ -5,7 +5,214 @@ const SOURCES = [
   { id: 'spotify', label: 'Spotify', icon: '🎵', color: 'var(--green)', border: 'var(--green-dark)', bg: 'rgba(30,215,96,0.12)' },
   { id: 'ytmusic', label: 'YT Music', icon: '▶️', color: '#ff4444', border: 'rgba(255,68,68,0.4)', bg: 'rgba(255,0,0,0.08)' },
   { id: 'soundcloud', label: 'SoundCloud', icon: '☁️', color: '#ff5500', border: 'rgba(255,85,0,0.4)', bg: 'rgba(255,85,0,0.08)' },
+  { id: 'playlist', label: 'Playlist', icon: '📋', color: '#4a9fff', border: 'rgba(74,159,255,0.4)', bg: 'rgba(74,159,255,0.08)' },
 ]
+
+function PlaylistImport({ authFetch }) {
+  const [url, setUrl] = useState('')
+  const [loading, setLoading] = useState(false)
+  const [fetching, setFetching] = useState(false)
+  const [preview, setPreview] = useState(null)
+  const [result, setResult] = useState(null)
+  const [error, setError] = useState('')
+
+  const detectSource = (url) => {
+    if (url.includes('spotify.com/playlist')) return { label: 'Spotify Playlist', color: 'var(--green)', icon: '🎵' }
+    if (url.includes('youtube.com/playlist') || (url.includes('youtube.com') && url.includes('list='))) return { label: 'YouTube Playlist', color: '#ff4444', icon: '▶️' }
+    return null
+  }
+
+  const source = detectSource(url)
+
+  const handleFetch = async () => {
+    if (!url.trim()) return
+    setFetching(true)
+    setError('')
+    setPreview(null)
+    setResult(null)
+    try {
+      const r = await authFetch('/api/playlists/fetch', { method: 'POST', body: JSON.stringify({ url }) })
+      const d = await r.json()
+      if (!r.ok) throw new Error(d.detail || 'Failed to fetch playlist')
+      setPreview(d)
+    } catch (e) {
+      setError(e.message)
+    } finally { setFetching(false) }
+  }
+
+  const handleDownloadAll = async () => {
+    setLoading(true)
+    setError('')
+    try {
+      const r = await authFetch('/api/playlists/download', { method: 'POST', body: JSON.stringify({ url }) })
+      const d = await r.json()
+      if (!r.ok) throw new Error(d.detail || 'Failed to queue playlist')
+      setResult(d)
+      setPreview(null)
+    } catch (e) {
+      setError(e.message)
+    } finally { setLoading(false) }
+  }
+
+  return (
+    <div style={{ padding: '0' }}>
+      <div style={{ marginBottom: 16 }}>
+        <h1 style={{ fontSize: 26, fontWeight: 800, letterSpacing: '-1px', color: 'var(--text)', marginBottom: 2 }}>Import Playlist</h1>
+        <p style={{ fontSize: 13, color: 'var(--text-muted)' }}>Download an entire Spotify or YouTube playlist</p>
+      </div>
+
+      {/* URL Input */}
+      <div style={{ marginBottom: 12 }}>
+        <div style={{ position: 'relative' }}>
+          <input
+            value={url}
+            onChange={e => { setUrl(e.target.value); setPreview(null); setResult(null); setError('') }}
+            onKeyDown={e => e.key === 'Enter' && handleFetch()}
+            placeholder="Paste Spotify or YouTube playlist URL..."
+            style={{
+              width: '100%', padding: '14px 16px',
+              background: 'var(--bg-1)', border: '1px solid var(--border)',
+              borderRadius: 14, color: 'var(--text)', fontSize: 14,
+              outline: 'none', fontFamily: 'DM Sans', WebkitAppearance: 'none'
+            }}
+            onFocus={e => e.target.style.borderColor = '#4a9fff'}
+            onBlur={e => e.target.style.borderColor = 'var(--border)'}
+          />
+          {url && (
+            <button onClick={() => { setUrl(''); setPreview(null); setResult(null) }} style={{
+              position: 'absolute', right: 12, top: '50%', transform: 'translateY(-50%)',
+              width: 22, height: 22, borderRadius: 11, background: 'var(--bg-3)',
+              border: 'none', color: 'var(--text-muted)', cursor: 'pointer', fontSize: 12,
+              display: 'flex', alignItems: 'center', justifyContent: 'center'
+            }}>✕</button>
+          )}
+        </div>
+
+        {/* Detected source badge */}
+        {source && (
+          <div style={{ marginTop: 8, display: 'flex', alignItems: 'center', gap: 6 }}>
+            <span style={{ fontSize: 12 }}>{source.icon}</span>
+            <span style={{ fontSize: 12, color: source.color, fontFamily: 'DM Mono', fontWeight: 600 }}>{source.label} detected</span>
+          </div>
+        )}
+      </div>
+
+      {/* Fetch button */}
+      {!preview && !result && (
+        <button onClick={handleFetch} disabled={fetching || !url.trim() || !source} style={{
+          width: '100%', padding: '14px', borderRadius: 14, fontSize: 14, fontWeight: 700,
+          background: source ? 'rgba(74,159,255,0.12)' : 'var(--bg-2)',
+          color: source ? '#4a9fff' : 'var(--text-muted)',
+          border: `1px solid ${source ? 'rgba(74,159,255,0.4)' : 'var(--border)'}`,
+          cursor: source ? 'pointer' : 'not-allowed', marginBottom: 16,
+          display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8
+        }}>
+          {fetching ? <><div className="spinner" style={{ width: 16, height: 16 }} /> Fetching tracks...</> : '🔍 Preview Playlist'}
+        </button>
+      )}
+
+      {/* Error */}
+      {error && (
+        <div style={{ background: 'rgba(233,68,68,0.1)', border: '1px solid rgba(233,68,68,0.3)', borderRadius: 12, padding: '12px 16px', fontSize: 13, color: 'var(--red)', marginBottom: 16 }}>
+          {error}
+        </div>
+      )}
+
+      {/* Success result */}
+      {result && (
+        <div style={{ background: 'rgba(30,215,96,0.08)', border: '1px solid var(--green-dark)', borderRadius: 14, padding: 20, marginBottom: 16, textAlign: 'center' }}>
+          <div style={{ fontSize: 36, marginBottom: 8 }}>🎉</div>
+          <div style={{ fontSize: 18, fontWeight: 800, color: 'var(--green)', marginBottom: 4 }}>{result.playlist_name}</div>
+          <div style={{ fontSize: 14, color: 'var(--text-dim)', marginBottom: 12 }}>
+            <span style={{ color: 'var(--green)', fontWeight: 700 }}>{result.queued}</span> tracks queued
+            {result.skipped > 0 && <span style={{ color: 'var(--text-muted)' }}> · {result.skipped} already downloaded</span>}
+          </div>
+          <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>Check the Downloads tab to track progress</div>
+          <button onClick={() => { setUrl(''); setResult(null) }} style={{
+            marginTop: 14, padding: '8px 20px', borderRadius: 20, fontSize: 13, fontWeight: 700,
+            background: 'var(--green)', color: '#000', border: 'none', cursor: 'pointer'
+          }}>Import Another</button>
+        </div>
+      )}
+
+      {/* Preview */}
+      {preview && (
+        <div>
+          {/* Playlist header */}
+          <div style={{ background: 'var(--bg-1)', border: '1px solid var(--border)', borderRadius: 14, padding: '14px 16px', marginBottom: 12 }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 4 }}>
+              <div>
+                <div style={{ fontSize: 16, fontWeight: 800, color: 'var(--text)' }}>{preview.playlist_name}</div>
+                <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 2 }}>{preview.tracks.length} tracks</div>
+              </div>
+              <div style={{
+                fontSize: 10, padding: '3px 10px', borderRadius: 20, fontFamily: 'DM Mono', fontWeight: 600,
+                background: preview.source === 'spotify' ? 'rgba(30,215,96,0.12)' : 'rgba(255,68,68,0.1)',
+                color: preview.source === 'spotify' ? 'var(--green)' : '#ff4444'
+              }}>
+                {preview.source === 'spotify' ? '🎵 Spotify' : '▶️ YouTube'}
+              </div>
+            </div>
+          </div>
+
+          {/* Download all button */}
+          <button onClick={handleDownloadAll} disabled={loading} style={{
+            width: '100%', padding: '14px', borderRadius: 14, fontSize: 15, fontWeight: 800,
+            background: 'var(--green)', color: '#000', border: 'none', cursor: 'pointer',
+            display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, marginBottom: 14
+          }}>
+            {loading ? <><div className="spinner" style={{ width: 16, height: 16 }} /> Queueing...</> : `⬇️ Download All ${preview.tracks.length} Tracks`}
+          </button>
+
+          {/* Track list */}
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+            {preview.tracks.slice(0, 50).map((t, i) => (
+              <div key={i} style={{
+                display: 'flex', alignItems: 'center', gap: 10,
+                padding: '10px 12px', borderRadius: 10,
+                background: 'var(--bg-1)', border: '1px solid var(--border)',
+                animation: 'fadeUp 0.2s ease both', animationDelay: `${Math.min(i * 0.02, 0.5)}s`
+              }}>
+                <div style={{ width: 38, height: 38, borderRadius: 6, overflow: 'hidden', background: 'var(--bg-3)', flexShrink: 0 }}>
+                  {t.album_art && <img src={t.album_art} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />}
+                </div>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontWeight: 600, fontSize: 13, color: 'var(--text)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{t.name}</div>
+                  <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 1, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{t.artist}</div>
+                </div>
+                {t.duration && <div style={{ fontSize: 10, color: 'var(--text-muted)', fontFamily: 'DM Mono', flexShrink: 0 }}>{t.duration}</div>}
+              </div>
+            ))}
+            {preview.tracks.length > 50 && (
+              <div style={{ textAlign: 'center', padding: '10px', fontSize: 12, color: 'var(--text-muted)' }}>
+                +{preview.tracks.length - 50} more tracks
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Instructions */}
+      {!url && !preview && !result && (
+        <div style={{ marginTop: 8 }}>
+          <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--text-muted)', marginBottom: 12, textTransform: 'uppercase', letterSpacing: 1 }}>Supported</div>
+          {[
+            { icon: '🎵', label: 'Spotify Playlists', example: 'open.spotify.com/playlist/...', color: 'var(--green)' },
+            { icon: '▶️', label: 'YouTube Playlists', example: 'youtube.com/playlist?list=...', color: '#ff4444' },
+          ].map(({ icon, label, example, color }) => (
+            <div key={label} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '12px 14px', background: 'var(--bg-1)', border: '1px solid var(--border)', borderRadius: 12, marginBottom: 8 }}>
+              <span style={{ fontSize: 22, flexShrink: 0 }}>{icon}</span>
+              <div>
+                <div style={{ fontSize: 13, fontWeight: 600, color }}>{label}</div>
+                <div style={{ fontSize: 11, color: 'var(--text-muted)', fontFamily: 'DM Mono', marginTop: 2 }}>{example}</div>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
 
 export default function Search() {
   const { authFetch } = useAuth()
@@ -30,17 +237,13 @@ export default function Search() {
       let r, d
       if (source === 'spotify') {
         r = await authFetch(`/api/search?q=${encodeURIComponent(query)}&type=${type}`)
-        d = await r.json()
-        setResults(d.results || [])
       } else if (source === 'ytmusic') {
         r = await authFetch(`/api/search/ytmusic?q=${encodeURIComponent(query)}`)
-        d = await r.json()
-        setResults(d.results || [])
       } else if (source === 'soundcloud') {
         r = await authFetch(`/api/search/soundcloud?q=${encodeURIComponent(query)}`)
-        d = await r.json()
-        setResults(d.results || [])
       }
+      d = await r.json()
+      setResults(d.results || [])
     } catch {}
     finally { setLoading(false) }
   }
@@ -61,28 +264,41 @@ export default function Search() {
     try {
       const r = await authFetch('/api/downloads', {
         method: 'POST',
-        body: JSON.stringify({
-          uri: item.uri,
-          track_name: item.name,
-          artist: item.artist,
-          album: item.album,
-          album_art: item.album_art,
-          type: dlType || item.type || 'track'
-        })
+        body: JSON.stringify({ uri: item.uri, track_name: item.name, artist: item.artist, album: item.album, album_art: item.album_art, type: dlType || item.type || 'track' })
       })
       const d = await r.json()
       setQueued(q => ({ ...q, [key]: d.status || 'queued' }))
-    } catch {
-      setQueued(q => ({ ...q, [key]: 'error' }))
-    }
+    } catch { setQueued(q => ({ ...q, [item.uri]: 'error' })) }
   }
 
   const isDone = (uri) => queued[uri] && queued[uri] !== 'loading' && queued[uri] !== 'error'
-
   const sourceLabel = (type) => {
     if (type === 'ytmusic') return { text: '▶ YouTube Music', color: '#ff4444' }
     if (type === 'soundcloud') return { text: '☁ SoundCloud', color: '#ff5500' }
     return null
+  }
+
+  if (source === 'playlist') {
+    return (
+      <div style={{ padding: '20px 16px 0' }}>
+        {/* Source tabs */}
+        <div style={{ display: 'flex', gap: 6, marginBottom: 20, overflowX: 'auto', paddingBottom: 4 }}>
+          {SOURCES.map(s => (
+            <button key={s.id} onClick={() => { setSource(s.id); setResults([]) }} style={{
+              flexShrink: 0, padding: '9px 12px', borderRadius: 12, fontSize: 11, fontWeight: 700,
+              background: source === s.id ? s.bg : 'var(--bg-1)',
+              color: source === s.id ? s.color : 'var(--text-muted)',
+              border: `1px solid ${source === s.id ? s.border : 'var(--border)'}`,
+              cursor: 'pointer', transition: 'all 0.15s',
+              display: 'flex', alignItems: 'center', gap: 4
+            }}>
+              <span style={{ fontSize: 13 }}>{s.icon}</span> {s.label}
+            </button>
+          ))}
+        </div>
+        <PlaylistImport authFetch={authFetch} />
+      </div>
+    )
   }
 
   return (
@@ -101,9 +317,7 @@ export default function Search() {
             </div>
           </div>
           {artistAlbums.length === 0 ? (
-            <div style={{ display: 'flex', justifyContent: 'center', padding: 40 }}>
-              <div className="spinner" style={{ width: 28, height: 28 }} />
-            </div>
+            <div style={{ display: 'flex', justifyContent: 'center', padding: 40 }}><div className="spinner" style={{ width: 28, height: 28 }} /></div>
           ) : (
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 10 }}>
               {artistAlbums.map(a => (
@@ -137,18 +351,17 @@ export default function Search() {
           </div>
 
           {/* Source tabs */}
-          <div style={{ display: 'flex', gap: 6, marginBottom: 12 }}>
+          <div style={{ display: 'flex', gap: 6, marginBottom: 12, overflowX: 'auto', paddingBottom: 4 }}>
             {SOURCES.map(s => (
               <button key={s.id} onClick={() => { setSource(s.id); setResults([]) }} style={{
-                flex: 1, padding: '9px 4px', borderRadius: 12, fontSize: 12, fontWeight: 700,
+                flexShrink: 0, padding: '9px 12px', borderRadius: 12, fontSize: 11, fontWeight: 700,
                 background: source === s.id ? s.bg : 'var(--bg-1)',
                 color: source === s.id ? s.color : 'var(--text-muted)',
                 border: `1px solid ${source === s.id ? s.border : 'var(--border)'}`,
                 cursor: 'pointer', transition: 'all 0.15s',
-                display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 4
+                display: 'flex', alignItems: 'center', gap: 4
               }}>
-                <span style={{ fontSize: 14 }}>{s.icon}</span>
-                <span style={{ fontSize: 11 }}>{s.label}</span>
+                <span style={{ fontSize: 13 }}>{s.icon}</span> {s.label}
               </button>
             ))}
           </div>
@@ -161,14 +374,10 @@ export default function Search() {
               value={query}
               onChange={e => setQuery(e.target.value)}
               onKeyDown={e => e.key === 'Enter' && search()}
-              placeholder={
-                source === 'spotify' ? 'Songs, albums, artists...' :
-                source === 'ytmusic' ? 'Search YouTube Music...' :
-                'Search SoundCloud...'
-              }
+              placeholder={source === 'spotify' ? 'Songs, albums, artists...' : source === 'ytmusic' ? 'Search YouTube Music...' : 'Search SoundCloud...'}
               style={{
                 width: '100%', padding: '14px 44px 14px 44px',
-                background: 'var(--bg-1)', border: `1px solid var(--border)`,
+                background: 'var(--bg-1)', border: '1px solid var(--border)',
                 borderRadius: 14, color: 'var(--text)', fontSize: 15,
                 outline: 'none', fontFamily: 'DM Sans', WebkitAppearance: 'none'
               }}
@@ -185,7 +394,6 @@ export default function Search() {
             )}
           </div>
 
-          {/* Type tabs (Spotify only) + Search button */}
           <div style={{ display: 'flex', gap: 8, marginBottom: 20 }}>
             {source === 'spotify' && [['track', 'Tracks'], ['album', 'Albums'], ['artist', 'Artists']].map(([val, label]) => (
               <button key={val} onClick={() => setType(val)} style={{
@@ -193,24 +401,23 @@ export default function Search() {
                 background: type === val ? 'var(--green)' : 'var(--bg-2)',
                 color: type === val ? '#000' : 'var(--text-dim)',
                 border: '1px solid', borderColor: type === val ? 'var(--green)' : 'var(--border)',
-                cursor: 'pointer', transition: 'all 0.15s'
+                cursor: 'pointer'
               }}>{label}</button>
             ))}
             {source !== 'spotify' && (
               <div style={{ fontSize: 11, color: 'var(--text-muted)', display: 'flex', alignItems: 'center', fontFamily: 'DM Mono' }}>
-                {source === 'ytmusic' ? 'Songs, covers, lives, remixes...' : 'Tracks, mixes, podcasts...'}
+                {source === 'ytmusic' ? 'Lives, covers, remixes...' : 'Tracks, mixes, podcasts...'}
               </div>
             )}
             <button onClick={search} disabled={loading || !query.trim()} style={{
               marginLeft: 'auto', padding: '9px 20px', borderRadius: 20, fontSize: 13, fontWeight: 700,
-              background: currentSource.color, color: '#fff', border: 'none', cursor: 'pointer',
-              opacity: loading || !query.trim() ? 0.5 : 1, transition: 'opacity 0.15s'
+              background: currentSource.color, color: source === 'spotify' ? '#000' : '#fff',
+              border: 'none', cursor: 'pointer', opacity: loading || !query.trim() ? 0.5 : 1
             }}>
               {loading ? <div className="spinner" style={{ width: 14, height: 14 }} /> : 'Search'}
             </button>
           </div>
 
-          {/* Empty state */}
           {results.length === 0 && !loading && (
             <div style={{ textAlign: 'center', padding: '50px 0' }}>
               <div style={{ fontSize: 52, marginBottom: 14 }}>{currentSource.icon}</div>
@@ -218,14 +425,11 @@ export default function Search() {
                 {source === 'spotify' ? 'Find your music' : source === 'ytmusic' ? 'Search YouTube Music' : 'Search SoundCloud'}
               </div>
               <div style={{ fontSize: 13, color: 'var(--text-muted)' }}>
-                {source === 'spotify' ? 'Search tracks, albums or artists' :
-                 source === 'ytmusic' ? 'Live versions, covers, remixes and more' :
-                 'Tracks, DJ mixes, podcasts and more'}
+                {source === 'spotify' ? 'Search tracks, albums or artists' : source === 'ytmusic' ? 'Live versions, covers, remixes and more' : 'Tracks, DJ mixes, podcasts and more'}
               </div>
             </div>
           )}
 
-          {/* Results */}
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
             {results.map((item, i) => {
               const label = sourceLabel(item.type)
@@ -244,15 +448,12 @@ export default function Search() {
                     <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 2, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
                       {item.artist}{item.album ? ` · ${item.album}` : ''}{item.duration ? ` · ${item.duration}` : ''}
                     </div>
-                    {label && (
-                      <div style={{ fontSize: 10, color: label.color, fontFamily: 'DM Mono', marginTop: 2 }}>{label.text}</div>
-                    )}
+                    {label && <div style={{ fontSize: 10, color: label.color, fontFamily: 'DM Mono', marginTop: 2 }}>{label.text}</div>}
                   </div>
                   {item.type === 'artist' ? (
                     <button onClick={() => loadArtist(item)} style={{
                       padding: '8px 14px', borderRadius: 20, fontSize: 12, fontWeight: 700,
-                      background: 'var(--bg-2)', color: 'var(--text-dim)',
-                      border: '1px solid var(--border)', cursor: 'pointer'
+                      background: 'var(--bg-2)', color: 'var(--text-dim)', border: '1px solid var(--border)', cursor: 'pointer'
                     }}>View →</button>
                   ) : (
                     <button onClick={() => download(item)} disabled={queued[item.uri] === 'loading' || isDone(item.uri)} style={{
@@ -260,8 +461,7 @@ export default function Search() {
                       background: isDone(item.uri) ? 'rgba(30,215,96,0.12)' : 'var(--bg-2)',
                       color: isDone(item.uri) ? 'var(--green)' : 'var(--text-dim)',
                       border: `1px solid ${isDone(item.uri) ? 'var(--green-dark)' : 'var(--border)'}`,
-                      cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center',
-                      fontSize: 18, transition: 'all 0.15s'
+                      cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 18
                     }}>
                       {queued[item.uri] === 'loading' ? <div className="spinner" style={{ width: 14, height: 14 }} /> : isDone(item.uri) ? '✓' : '↓'}
                     </button>
