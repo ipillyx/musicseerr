@@ -123,13 +123,27 @@ function PlaylistImport({ authFetch }) {
         <div style={{ background: 'rgba(30,215,96,0.08)', border: '1px solid var(--green-dark)', borderRadius: 14, padding: 20, marginBottom: 16, textAlign: 'center' }}>
           <div style={{ fontSize: 36, marginBottom: 8 }}>🎉</div>
           <div style={{ fontSize: 18, fontWeight: 800, color: 'var(--green)', marginBottom: 4 }}>{result.playlist_name}</div>
-          <div style={{ fontSize: 14, color: 'var(--text-dim)', marginBottom: 12 }}>
+          <div style={{ fontSize: 14, color: 'var(--text-dim)', marginBottom: 16 }}>
             <span style={{ color: 'var(--green)', fontWeight: 700 }}>{result.queued}</span> tracks queued
             {result.skipped > 0 && <span style={{ color: 'var(--text-muted)' }}> · {result.skipped} already downloaded</span>}
           </div>
-          <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>Check the Downloads tab to track progress</div>
+          <div style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 16 }}>Check the Downloads tab to track progress</div>
+          <button onClick={async () => {
+            try {
+              const r = await authFetch('/api/playlists/create-m3u', {
+                method: 'POST',
+                body: JSON.stringify({ playlist_name: result.playlist_name })
+              })
+              const d = await r.json()
+              alert('✅ Navidrome playlist created: ' + result.playlist_name)
+            } catch { alert('Failed to create playlist') }
+          }} style={{
+            width: '100%', padding: '12px', borderRadius: 12, fontSize: 14, fontWeight: 700,
+            background: 'var(--bg-2)', color: 'var(--text)', border: '1px solid var(--border)',
+            cursor: 'pointer', marginBottom: 8
+          }}>🎵 Create Navidrome Playlist</button>
           <button onClick={() => { setUrl(''); setResult(null) }} style={{
-            marginTop: 14, padding: '8px 20px', borderRadius: 20, fontSize: 13, fontWeight: 700,
+            padding: '8px 20px', borderRadius: 20, fontSize: 13, fontWeight: 700,
             background: 'var(--green)', color: '#000', border: 'none', cursor: 'pointer'
           }}>Import Another</button>
         </div>

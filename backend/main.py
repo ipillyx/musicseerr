@@ -886,6 +886,45 @@ def download_playlist(req: PlaylistImportRequest, user=Depends(get_current_user)
         conn.close()
         raise HTTPException(status_code=400, detail="Unsupported URL.")
 
+
+
+# --- Create M3U Playlist ---
+class M3URequest(BaseModel):
+    playlist_name: str
+    track_ids: Optional[list] = None
+
+@app.post("/api/playlists/create-m3u")
+def create_m3u(req: M3URequest, user=Depends(get_current_user)):
+    """Create an M3U playlist file from completed downloads."""
+    conn = get_db()
+    if req.track_ids:
+        rows = conn.execute(
+            f"SELECT track_name, artist, album FROM downloads WHERE id IN ({','.join('?' * len(req.track_ids))}) AND status = 'completed'",
+            req.track_ids
+        ).fetchall()
+    else:
+        rows = conn.execute(
+            "SELECT track_name, artist, album FROM downloads WHERE status = 'completed' ORDER BY id DESC LIMIT 500"
+        ).fetchall()
+    conn.close()
+
+    m3u = f"#EXTM3U\n#PLAYLIST:{req.playlist_name}\n\n"
+    for name, artist, album in rows:
+        safe_artist = (artist or "Unknown").replace("/", "-")
+        safe_album = (album or safe_artist).replace("/", "-")
+        safe_name = (name or "Unknown").replace("/", "-")
+        m3u += f"#EXTINF:-1,{artist} - {name}\n"
+        m3u += f"/music/{safe_artist}/{safe_album}/{safe_name}.mp3\n\n"
+
+    playlist_path = os.path.join(MUSIC_PATH, f"{req.playlist_name}.m3u")
+    with open(playlist_path, "w") as f:
+        f.write(m3u)
+
+    # Trigger Navidrome scan
+    threading.Thread(target=trigger_navidrome_scan, daemon=True).start()
+
+    return {"message": f"Playlist '{req.playlist_name}' created with {len(rows)} tracks"}
+
 # --- Last.fm Recommendations ---
 LASTFM_API_KEY = os.getenv("LASTFM_API_KEY", "")
 LASTFM_USER = os.getenv("LASTFM_USER", "")
