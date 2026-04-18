@@ -70,6 +70,25 @@ def init_db():
             added_by INTEGER,
             added_at TEXT DEFAULT (datetime('now'))
         );
+        CREATE TABLE IF NOT EXISTS playlists (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL,
+            url TEXT UNIQUE NOT NULL,
+            source TEXT NOT NULL,
+            track_count INTEGER DEFAULT 0,
+            last_synced TEXT,
+            created_at TEXT DEFAULT (datetime('now')),
+            created_by INTEGER
+        );
+        CREATE TABLE IF NOT EXISTS playlist_tracks (
+            playlist_id INTEGER NOT NULL,
+            download_id INTEGER NOT NULL,
+            spotify_uri TEXT NOT NULL,
+            track_name TEXT,
+            artist TEXT,
+            album TEXT,
+            PRIMARY KEY (playlist_id, spotify_uri)
+        );
     """)
     conn.execute("INSERT OR IGNORE INTO settings (key, value) VALUES ('invite_code', ?)", (INVITE_CODE,))
     conn.commit()
@@ -168,8 +187,17 @@ def process_download_queue():
 
             os.makedirs(dest_dir, exist_ok=True)
 
+            # Get quality setting
+            try:
+                qconn = get_db()
+                qrow = qconn.execute("SELECT value FROM settings WHERE key = 'download_quality'").fetchone()
+                qconn.close()
+                quality = qrow["value"] if qrow else "0"
+            except:
+                quality = "0"
+
             cmd = [
-                "yt-dlp", "-x", "--audio-format", "mp3", "--audio-quality", "0",
+                "yt-dlp", "-x", "--audio-format", "mp3", "--audio-quality", quality,
                 "--output", output_template, "--no-embed-metadata", "--write-thumbnail",
                 search_query
             ]
@@ -199,6 +227,18 @@ def process_download_queue():
                 )
                 conn.commit()
                 send_discord(f"🎵 **Downloaded:** {row['artist']} — {row['track_name']}\n> Requested by user #{row['user_id']}")
+                # Update any M3U playlists containing this track
+                try:
+                    pconn = get_db()
+                    playlists = pconn.execute(
+                        "SELECT p.name FROM playlists p JOIN playlist_tracks pt ON p.id = pt.playlist_id WHERE pt.spotify_uri = ?",
+                        (row["spotify_uri"],)
+                    ).fetchall()
+                    pconn.close()
+                    for pl in playlists:
+                        print(f"[M3U] Track belongs to playlist: {pl['name']}", flush=True)
+                except Exception as pe:
+                    print(f"[M3U] Playlist update error: {pe}", flush=True)
                 # Trigger Navidrome rescan after successful download
                 threading.Thread(target=trigger_navidrome_scan, daemon=True).start()
             else:
@@ -218,6 +258,160 @@ def process_download_queue():
             conn.close()
             download_queue.task_done()
 
+
+
+# --- Auto-retry failed downloads ---
+def auto_retry_failed():
+    """Retry failed downloads every 30 minutes."""
+    import time
+    while True:
+        time.sleep(1800)  # 30 minutes
+        try:
+            conn = get_db()
+            failed = conn.execute(
+                "SELECT id FROM downloads WHERE status = 'failed' AND requested_at > datetime('now', '-24 hours')"
+            ).fetchall()
+            for row in failed:
+                conn.execute("UPDATE downloads SET status = 'queued', error_msg = NULL WHERE id = ?", (row['id'],))
+                download_queue.put(row['id'])
+            if failed:
+                conn.commit()
+                print(f"[AUTO-RETRY] Retrying {len(failed)} failed downloads", flush=True)
+            conn.close()
+        except Exception as e:
+            print(f"[AUTO-RETRY] Error: {e}", flush=True)
+
+# --- yt-dlp auto-update ---
+def auto_update_ytdlp():
+    """Update yt-dlp daily to prevent YouTube breakage."""
+    import time, subprocess
+    while True:
+        time.sleep(86400)  # 24 hours
+        try:
+            result = subprocess.run(["pip", "install", "--upgrade", "yt-dlp", "--break-system-packages"], 
+                capture_output=True, text=True, timeout=120)
+            print(f"[YTDLP-UPDATE] {result.stdout.strip()}", flush=True)
+        except Exception as e:
+            print(f"[YTDLP-UPDATE] Error: {e}", flush=True)
+
+
+
+# --- Playlist Monitoring Worker ---
+def monitor_playlists():
+    """Check saved playlists for new tracks every 6 hours."""
+    import time
+    time.sleep(60)  # Wait 1 min after startup
+    while True:
+        try:
+            conn = get_db()
+            playlists = conn.execute("SELECT * FROM playlists").fetchall()
+            conn.close()
+            
+            for pl in playlists:
+                try:
+                    print(f"[MONITOR] Checking playlist: {pl['name']}", flush=True)
+                    conn = get_db()
+                    
+                    if pl['source'] == 'spotify':
+                        sp = get_spotify()
+                        playlist_id = pl['url'].split("playlist/")[1].split("?")[0]
+                        result = sp.playlist(playlist_id)
+                        items = result["tracks"]["items"]
+                        next_url = result["tracks"]["next"]
+                        while next_url:
+                            more = sp.next(result["tracks"])
+                            items.extend(more["items"])
+                            next_url = more["next"]
+                            result["tracks"] = more
+                        
+                        new_tracks = []
+                        for item in items:
+                            t = item.get("track")
+                            if not t or not t.get("uri"):
+                                continue
+                            # Check if this track is already in playlist_tracks
+                            existing = conn.execute(
+                                "SELECT 1 FROM playlist_tracks WHERE playlist_id = ? AND spotify_uri = ?",
+                                (pl["id"], t["uri"])
+                            ).fetchone()
+                            if not existing:
+                                new_tracks.append(t)
+                        
+                        if new_tracks:
+                            print(f"[MONITOR] Found {len(new_tracks)} new tracks in {pl['name']}", flush=True)
+                            # Queue new tracks
+                            user_id = pl["created_by"] or 1
+                            queued_ids = []
+                            for t in new_tracks:
+                                artist = ", ".join(a["name"] for a in t["artists"])
+                                album_art = t["album"]["images"][0]["url"] if t["album"]["images"] else None
+                                # Check not already downloading
+                                dl_existing = conn.execute(
+                                    "SELECT id FROM downloads WHERE spotify_uri = ? AND status IN ('queued','downloading','completed')",
+                                    (t["uri"],)
+                                ).fetchone()
+                                if dl_existing:
+                                    dl_id = dl_existing["id"]
+                                else:
+                                    cursor = conn.execute(
+                                        "INSERT INTO downloads (user_id, spotify_uri, track_name, artist, album, album_art) VALUES (?,?,?,?,?,?)",
+                                        (user_id, t["uri"], t["name"], artist, t["album"]["name"], album_art)
+                                    )
+                                    conn.commit()
+                                    dl_id = cursor.lastrowid
+                                    download_queue.put(dl_id)
+                                    queued_ids.append(dl_id)
+                                
+                                # Add to playlist_tracks
+                                conn.execute(
+                                    "INSERT OR IGNORE INTO playlist_tracks (playlist_id, download_id, spotify_uri, track_name, artist, album) VALUES (?,?,?,?,?,?)",
+                                    (pl["id"], dl_id, t["uri"], t["name"], artist, t["album"]["name"])
+                                )
+                            
+                            # Update M3U with all tracks
+                            all_items = conn.execute(
+                                "SELECT track_name, artist, album FROM playlist_tracks WHERE playlist_id = ?",
+                                (pl["id"],)
+                            ).fetchall()
+                            
+                            m3u_lines = []
+                            for row in all_items:
+                                safe_artist = (row["artist"] or "Unknown").replace("/", "-")
+                                safe_album = (row["album"] or safe_artist).replace("/", "-")
+                                safe_name = (row["track_name"] or "Unknown").replace("/", "-")
+                                m3u_lines.append(f"#EXTINF:-1,{row['artist']} - {row['track_name']}\n/music/{safe_artist}/{safe_album}/{safe_name}.mp3")
+                            
+                            safe_name = pl["name"].replace("/", "-")
+                            m3u_content = f"#EXTM3U\n#PLAYLIST:{pl['name']}\n\n" + "\n\n".join(m3u_lines) + "\n"
+                            with open(os.path.join(MUSIC_PATH, f"{safe_name}.m3u"), "w") as f:
+                                f.write(m3u_content)
+                            
+                            conn.commit()
+                            send_discord(f"🔄 **Playlist Update:** {pl['name']} — {len(new_tracks)} new tracks added")
+                            threading.Thread(target=trigger_navidrome_scan, daemon=True).start()
+                        else:
+                            print(f"[MONITOR] No new tracks in {pl['name']}", flush=True)
+                    
+                    # Update last_synced
+                    conn.execute(
+                        "UPDATE playlists SET last_synced = datetime('now') WHERE id = ?",
+                        (pl["id"],)
+                    )
+                    conn.commit()
+                    conn.close()
+                    
+                except Exception as e:
+                    print(f"[MONITOR] Error checking {pl['name']}: {e}", flush=True)
+                    try: conn.close()
+                    except: pass
+                
+                time.sleep(5)  # Small delay between playlists
+        
+        except Exception as e:
+            print(f"[MONITOR] Worker error: {e}", flush=True)
+        
+        time.sleep(21600)  # Check every 6 hours
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     init_db()
@@ -230,6 +424,13 @@ async def lifespan(app: FastAPI):
     print(f'[STARTUP] Recovered {len(pending)} queued downloads', flush=True)
     worker = threading.Thread(target=process_download_queue, daemon=True)
     worker.start()
+    retry_worker = threading.Thread(target=auto_retry_failed, daemon=True)
+    retry_worker.start()
+    update_worker = threading.Thread(target=auto_update_ytdlp, daemon=True)
+    update_worker.start()
+    monitor_worker = threading.Thread(target=monitor_playlists, daemon=True)
+    monitor_worker.start()
+    print("[STARTUP] All workers started", flush=True)
     yield
 
 app = FastAPI(lifespan=lifespan)
@@ -407,14 +608,14 @@ def request_download(req: DownloadRequest, user=Depends(get_current_user)):
         conn.close()
         raise HTTPException(status_code=429, detail=f"Daily limit of {limit} requests reached. Try again tomorrow.")
 
-    # Check if already requested
+    # Check if already downloaded/queued by ANY user - no duplicates
     existing = conn.execute(
         "SELECT * FROM downloads WHERE spotify_uri = ? AND status IN ('queued', 'downloading', 'completed')",
         (req.uri,)
     ).fetchone()
     if existing:
         conn.close()
-        return {"message": "Already requested", "id": existing["id"], "status": existing["status"]}
+        return {"message": "Already in library", "id": existing["id"], "status": existing["status"]}
 
     cursor = conn.execute(
         "INSERT INTO downloads (user_id, spotify_uri, track_name, artist, album, album_art) VALUES (?, ?, ?, ?, ?, ?)",
@@ -811,6 +1012,18 @@ def download_playlist(req: PlaylistImportRequest, user=Depends(get_current_user)
                 items.extend(more["items"])
                 next_url = more["next"]
                 result["tracks"] = more
+            
+            # Save playlist to DB for monitoring
+            try:
+                conn.execute(
+                    "INSERT OR IGNORE INTO playlists (name, url, source, created_by) VALUES (?,?,?,?)",
+                    (playlist_name, url.split("?")[0], "spotify", user["id"])
+                )
+                conn.commit()
+            except: pass
+            pl_row = conn.execute("SELECT id FROM playlists WHERE url = ?", (url.split("?")[0],)).fetchone()
+            pl_id = pl_row["id"] if pl_row else None
+            
             for item in items:
                 t = item.get("track")
                 if not t or not t.get("uri"):
@@ -822,16 +1035,54 @@ def download_playlist(req: PlaylistImportRequest, user=Depends(get_current_user)
                     (t["uri"],)
                 ).fetchone()
                 if existing:
+                    dl_id = existing["id"]
                     skipped += 1
+                else:
+                    album_art = t["album"]["images"][0]["url"] if t["album"]["images"] else None
+                    artist = ", ".join(a["name"] for a in t["artists"])
+                    cursor = conn.execute(
+                        "INSERT INTO downloads (user_id, spotify_uri, track_name, artist, album, album_art) VALUES (?,?,?,?,?,?)",
+                        (user["id"], t["uri"], t["name"], artist, t["album"]["name"], album_art)
+                    )
+                    conn.commit()
+                    dl_id = cursor.lastrowid
+                    download_queue.put(dl_id)
+                    queued += 1
+                
+                # Track which playlist this belongs to
+                if pl_id:
+                    artist = ", ".join(a["name"] for a in t["artists"])
+                    conn.execute(
+                        "INSERT OR IGNORE INTO playlist_tracks (playlist_id, download_id, spotify_uri, track_name, artist, album) VALUES (?,?,?,?,?,?)",
+                        (pl_id, dl_id, t["uri"], t["name"], artist, t["album"]["name"])
+                    )
+                    conn.commit()
+            # Create M3U using ONLY the tracks from this specific playlist
+            m3u_tracks = []
+            for item in items:
+                t = item.get("track")
+                if not t or not t.get("uri"):
                     continue
-                album_art = t["album"]["images"][0]["url"] if t["album"]["images"] else None
-                cursor = conn.execute(
-                    "INSERT INTO downloads (user_id, spotify_uri, track_name, artist, album, album_art) VALUES (?,?,?,?,?,?)",
-                    (user["id"], t["uri"], t["name"], ", ".join(a["name"] for a in t["artists"]), t["album"]["name"], album_art)
-                )
-                conn.commit()
-                download_queue.put(cursor.lastrowid)
-                queued += 1
+                artist = ", ".join(a["name"] for a in t["artists"])
+                album = t["album"]["name"]
+                name = t["name"]
+                safe_artist = artist.replace("/", "-")
+                safe_album = album.replace("/", "-")
+                safe_name = name.replace("/", "-")
+                m3u_tracks.append(f"#EXTINF:-1,{artist} - {name}\n/music/{safe_artist}/{safe_album}/{safe_name}.mp3")
+
+            if m3u_tracks:
+                safe_playlist = playlist_name.replace("/", "-").replace("\\", "-")
+                playlist_path = os.path.join(MUSIC_PATH, f"{safe_playlist}.m3u")
+                m3u_content = "#EXTM3U\n#PLAYLIST:" + playlist_name + "\n\n" + "\n\n".join(m3u_tracks) + "\n"
+                try:
+                    with open(playlist_path, "w") as f:
+                        f.write(m3u_content)
+                    threading.Thread(target=trigger_navidrome_scan, daemon=True).start()
+                    print(f"[M3U] Created: {safe_playlist} ({len(m3u_tracks)} tracks)", flush=True)
+                except Exception as me:
+                    print(f"[M3U] Failed: {me}", flush=True)
+
             conn.close()
             send_discord(f"📋 **Playlist Import:** {playlist_name} ({queued} tracks queued, {skipped} skipped)")
             return {"message": f"Queued {queued} tracks", "queued": queued, "skipped": skipped, "playlist_name": playlist_name}
@@ -875,6 +1126,32 @@ def download_playlist(req: PlaylistImportRequest, user=Depends(get_current_user)
                     queued += 1
                 except:
                     continue
+            # Create M3U for YouTube playlist too
+            yt_m3u_tracks = []
+            for line2 in result.stdout.strip().split("\n"):
+                if not line2.strip():
+                    continue
+                try:
+                    r2 = json.loads(line2)
+                    if r2.get("_type") == "playlist":
+                        continue
+                    title2 = r2.get("title", "Unknown").replace("/", "-")
+                    uploader2 = r2.get("uploader", r2.get("channel", "Unknown")).replace("/", "-")
+                    yt_m3u_tracks.append(f"#EXTINF:-1,{uploader2} - {title2}\n/music/{uploader2}/{playlist_name.replace(chr(47), '-')}/{title2}.mp3")
+                except:
+                    continue
+            
+            if yt_m3u_tracks:
+                m3u_content = f"#EXTM3U\n#PLAYLIST:{playlist_name}\n\n" + "\n\n".join(yt_m3u_tracks)
+                safe_playlist = playlist_name.replace("/", "-").replace("\\", "-")
+                playlist_path = os.path.join(MUSIC_PATH, f"{safe_playlist}.m3u")
+                try:
+                    with open(playlist_path, "w") as f:
+                        f.write(m3u_content)
+                    threading.Thread(target=trigger_navidrome_scan, daemon=True).start()
+                except Exception as me:
+                    print(f"[M3U] Failed: {me}", flush=True)
+
             conn.close()
             send_discord(f"📋 **YouTube Playlist:** {playlist_name} ({queued} tracks queued, {skipped} skipped)")
             return {"message": f"Queued {queued} tracks", "queued": queued, "skipped": skipped, "playlist_name": playlist_name}
@@ -895,35 +1172,242 @@ class M3URequest(BaseModel):
 
 @app.post("/api/playlists/create-m3u")
 def create_m3u(req: M3URequest, user=Depends(get_current_user)):
-    """Create an M3U playlist file from completed downloads."""
+    """Recreate M3U from Spotify playlist URL - requires url in request."""
+    raise HTTPException(status_code=400, detail="Use the Download All button to create playlists - they are created automatically.")
+
+
+
+# --- Storage Stats ---
+@app.get("/api/admin/storage")
+def get_storage(user=Depends(get_current_user)):
+    if not user["is_admin"]:
+        raise HTTPException(status_code=403, detail="Admin only")
+    try:
+        import shutil
+        total, used, free = shutil.disk_usage(MUSIC_PATH)
+        # Count files
+        mp3_count = 0
+        total_size = 0
+        for root, dirs, files in os.walk(MUSIC_PATH):
+            for f in files:
+                if f.endswith('.mp3'):
+                    mp3_count += 1
+                    total_size += os.path.getsize(os.path.join(root, f))
+        return {
+            "disk_total": total,
+            "disk_used": used,
+            "disk_free": free,
+            "music_size": total_size,
+            "music_size_gb": round(total_size / (1024**3), 2),
+            "mp3_count": mp3_count
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+# --- Download quality selector ---
+@app.get("/api/admin/settings/quality")
+def get_quality_setting(user=Depends(get_current_user)):
+    if not user["is_admin"]:
+        raise HTTPException(status_code=403, detail="Admin only")
     conn = get_db()
-    if req.track_ids:
-        rows = conn.execute(
-            f"SELECT track_name, artist, album FROM downloads WHERE id IN ({','.join('?' * len(req.track_ids))}) AND status = 'completed'",
-            req.track_ids
-        ).fetchall()
-    else:
-        rows = conn.execute(
-            "SELECT track_name, artist, album FROM downloads WHERE status = 'completed' ORDER BY id DESC LIMIT 500"
-        ).fetchall()
+    row = conn.execute("SELECT value FROM settings WHERE key = 'download_quality'").fetchone()
     conn.close()
+    return {"quality": row["value"] if row else "0"}  # 0 = best
 
-    m3u = f"#EXTM3U\n#PLAYLIST:{req.playlist_name}\n\n"
-    for name, artist, album in rows:
-        safe_artist = (artist or "Unknown").replace("/", "-")
-        safe_album = (album or safe_artist).replace("/", "-")
-        safe_name = (name or "Unknown").replace("/", "-")
-        m3u += f"#EXTINF:-1,{artist} - {name}\n"
-        m3u += f"/music/{safe_artist}/{safe_album}/{safe_name}.mp3\n\n"
+class QualityRequest(BaseModel):
+    quality: str  # "0" = best, "128", "192", "320"
 
-    playlist_path = os.path.join(MUSIC_PATH, f"{req.playlist_name}.m3u")
-    with open(playlist_path, "w") as f:
-        f.write(m3u)
+@app.put("/api/admin/settings/quality")
+def set_quality_setting(req: QualityRequest, user=Depends(get_current_user)):
+    if not user["is_admin"]:
+        raise HTTPException(status_code=403, detail="Admin only")
+    conn = get_db()
+    conn.execute("INSERT OR REPLACE INTO settings (key, value) VALUES ('download_quality', ?)", (req.quality,))
+    conn.commit()
+    conn.close()
+    return {"message": "Quality updated"}
 
-    # Trigger Navidrome scan
+# --- Duplicate check endpoint ---
+@app.get("/api/downloads/check")
+def check_duplicate(uri: str, user=Depends(get_current_user)):
+    conn = get_db()
+    existing = conn.execute(
+        "SELECT id, status, track_name, artist FROM downloads WHERE spotify_uri = ? AND status IN ('queued','downloading','completed')",
+        (uri,)
+    ).fetchone()
+    conn.close()
+    if existing:
+        return {"exists": True, "status": existing["status"], "track": existing["track_name"], "artist": existing["artist"]}
+    return {"exists": False}
+
+# --- Force yt-dlp update ---
+@app.post("/api/admin/update-ytdlp")
+def update_ytdlp(user=Depends(get_current_user)):
+    if not user["is_admin"]:
+        raise HTTPException(status_code=403, detail="Admin only")
+    try:
+        import subprocess
+        result = subprocess.run(
+            ["pip", "install", "--upgrade", "yt-dlp", "--break-system-packages"],
+            capture_output=True, text=True, timeout=120
+        )
+        version = subprocess.run(["yt-dlp", "--version"], capture_output=True, text=True).stdout.strip()
+        return {"message": "Updated successfully", "version": version}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+# --- Export download history ---
+@app.get("/api/downloads/export")
+def export_downloads(user=Depends(get_current_user)):
+    from fastapi.responses import PlainTextResponse
+    conn = get_db()
+    if user["is_admin"]:
+        rows = conn.execute("""
+            SELECT d.track_name, d.artist, d.album, d.status, d.requested_at, d.completed_at, u.username
+            FROM downloads d JOIN users u ON d.user_id = u.id
+            ORDER BY d.requested_at DESC
+        """).fetchall()
+    else:
+        rows = conn.execute("""
+            SELECT d.track_name, d.artist, d.album, d.status, d.requested_at, d.completed_at, u.username
+            FROM downloads d JOIN users u ON d.user_id = u.id
+            WHERE d.user_id = ?
+            ORDER BY d.requested_at DESC
+        """, (user["id"],)).fetchall()
+    conn.close()
+    csv = "Track,Artist,Album,Status,Requested,Completed,User\n"
+    for r in rows:
+        csv += f'"{r["track_name"]}","{r["artist"]}","{r["album"] or ""}","{r["status"]}","{r["requested_at"]}","{r["completed_at"] or ""}","{r["username"]}"\n'
+    return PlainTextResponse(csv, headers={"Content-Disposition": "attachment; filename=musicseerr-history.csv"})
+
+
+
+# --- Saved Playlists ---
+@app.get("/api/playlists")
+def get_playlists(user=Depends(get_current_user)):
+    conn = get_db()
+    rows = conn.execute("""
+        SELECT p.*, COUNT(pt.spotify_uri) as track_count 
+        FROM playlists p 
+        LEFT JOIN playlist_tracks pt ON p.id = pt.playlist_id
+        GROUP BY p.id
+        ORDER BY p.created_at DESC
+    """).fetchall()
+    conn.close()
+    return {"playlists": [dict(r) for r in rows]}
+
+@app.delete("/api/playlists/{playlist_id}")
+def delete_playlist(playlist_id: int, user=Depends(get_current_user)):
+    conn = get_db()
+    pl = conn.execute("SELECT * FROM playlists WHERE id = ?", (playlist_id,)).fetchone()
+    if not pl:
+        conn.close()
+        raise HTTPException(status_code=404, detail="Playlist not found")
+    if not user["is_admin"] and pl["created_by"] != user["id"]:
+        conn.close()
+        raise HTTPException(status_code=403, detail="Not your playlist")
+    # Delete M3U file
+    safe_name = pl["name"].replace("/", "-")
+    m3u_path = os.path.join(MUSIC_PATH, f"{safe_name}.m3u")
+    try:
+        if os.path.exists(m3u_path):
+            os.remove(m3u_path)
+    except: pass
+    conn.execute("DELETE FROM playlist_tracks WHERE playlist_id = ?", (playlist_id,))
+    conn.execute("DELETE FROM playlists WHERE id = ?", (playlist_id,))
+    conn.commit()
+    conn.close()
     threading.Thread(target=trigger_navidrome_scan, daemon=True).start()
+    return {"message": "Playlist deleted"}
 
-    return {"message": f"Playlist '{req.playlist_name}' created with {len(rows)} tracks"}
+@app.post("/api/playlists/{playlist_id}/sync")
+def sync_playlist(playlist_id: int, user=Depends(get_current_user)):
+    """Manually trigger a sync for a saved playlist."""
+    conn = get_db()
+    pl = conn.execute("SELECT * FROM playlists WHERE id = ?", (playlist_id,)).fetchone()
+    conn.close()
+    if not pl:
+        raise HTTPException(status_code=404, detail="Playlist not found")
+    
+    def do_sync():
+        try:
+            conn = get_db()
+            if pl["source"] == "spotify":
+                sp = get_spotify()
+                playlist_id_str = pl["url"].split("playlist/")[1].split("?")[0]
+                result = sp.playlist(playlist_id_str)
+                items = result["tracks"]["items"]
+                next_url = result["tracks"]["next"]
+                while next_url:
+                    more = sp.next(result["tracks"])
+                    items.extend(more["items"])
+                    next_url = more["next"]
+                    result["tracks"] = more
+                
+                new_count = 0
+                for item in items:
+                    t = item.get("track")
+                    if not t or not t.get("uri"): continue
+                    existing = conn.execute(
+                        "SELECT 1 FROM playlist_tracks WHERE playlist_id = ? AND spotify_uri = ?",
+                        (pl["id"], t["uri"])
+                    ).fetchone()
+                    if existing: continue
+                    
+                    artist = ", ".join(a["name"] for a in t["artists"])
+                    album_art = t["album"]["images"][0]["url"] if t["album"]["images"] else None
+                    dl_existing = conn.execute(
+                        "SELECT id FROM downloads WHERE spotify_uri = ? AND status IN ('queued','downloading','completed')",
+                        (t["uri"],)
+                    ).fetchone()
+                    if dl_existing:
+                        dl_id = dl_existing["id"]
+                    else:
+                        cursor = conn.execute(
+                            "INSERT INTO downloads (user_id, spotify_uri, track_name, artist, album, album_art) VALUES (?,?,?,?,?,?)",
+                            (pl["created_by"] or 1, t["uri"], t["name"], artist, t["album"]["name"], album_art)
+                        )
+                        conn.commit()
+                        dl_id = cursor.lastrowid
+                        download_queue.put(dl_id)
+                    
+                    conn.execute(
+                        "INSERT OR IGNORE INTO playlist_tracks (playlist_id, download_id, spotify_uri, track_name, artist, album) VALUES (?,?,?,?,?,?)",
+                        (pl["id"], dl_id, t["uri"], t["name"], artist, t["album"]["name"])
+                    )
+                    new_count += 1
+                
+                conn.execute("UPDATE playlists SET last_synced = datetime('now') WHERE id = ?", (pl["id"],))
+                conn.commit()
+                
+                # Rebuild M3U
+                all_items = conn.execute(
+                    "SELECT track_name, artist, album FROM playlist_tracks WHERE playlist_id = ?",
+                    (pl["id"],)
+                ).fetchall()
+                m3u_lines = []
+                for row in all_items:
+                    safe_artist = (row["artist"] or "Unknown").replace("/", "-")
+                    safe_album = (row["album"] or safe_artist).replace("/", "-")
+                    safe_name_t = (row["track_name"] or "Unknown").replace("/", "-")
+                    m3u_lines.append(f"#EXTINF:-1,{row['artist']} - {row['track_name']}\n/music/{safe_artist}/{safe_album}/{safe_name_t}.mp3")
+                safe_pl = pl["name"].replace("/", "-")
+                m3u_content = f"#EXTM3U\n#PLAYLIST:{pl['name']}\n\n" + "\n\n".join(m3u_lines) + "\n"
+                with open(os.path.join(MUSIC_PATH, f"{safe_pl}.m3u"), "w") as f:
+                    f.write(m3u_content)
+                
+                conn.close()
+                if new_count > 0:
+                    send_discord(f"🔄 **Playlist Synced:** {pl['name']} — {new_count} new tracks")
+                threading.Thread(target=trigger_navidrome_scan, daemon=True).start()
+                print(f"[SYNC] {pl['name']}: {new_count} new tracks", flush=True)
+        except Exception as e:
+            print(f"[SYNC] Error: {e}", flush=True)
+            try: conn.close()
+            except: pass
+    
+    threading.Thread(target=do_sync, daemon=True).start()
+    return {"message": "Sync started"}
 
 # --- Last.fm Recommendations ---
 LASTFM_API_KEY = os.getenv("LASTFM_API_KEY", "")

@@ -42,17 +42,21 @@ export default function Login() {
       alignItems: 'center', justifyContent: 'center',
       background: 'var(--bg)', padding: '24px 24px', maxWidth: 500, margin: '0 auto'
     }}>
+      {/* Logo */}
       <div style={{ textAlign: 'center', marginBottom: 48 }}>
         <div style={{
-          width: 72, height: 72, borderRadius: 22,
+          width: 80, height: 80, borderRadius: 22,
           background: 'rgba(30,215,96,0.12)', border: '1px solid rgba(30,215,96,0.25)',
           display: 'flex', alignItems: 'center', justifyContent: 'center',
-          fontSize: 36, margin: '0 auto 16px'
-        }}>🎵</div>
+          margin: '0 auto 16px', overflow: 'hidden', padding: 8
+        }}>
+          <img src="/icon-192x192.png" alt="MusicSeerr" style={{ width: '100%', height: '100%', objectFit: 'contain', borderRadius: 14 }} />
+        </div>
         <div style={{ fontSize: 28, fontWeight: 800, color: 'var(--green)', letterSpacing: '-1px' }}>MusicSeerr</div>
         <div style={{ fontSize: 13, color: 'var(--text-muted)', marginTop: 4 }}>pilly.uk music requests</div>
       </div>
 
+      {/* Form */}
       <div style={{ width: '100%', display: 'flex', flexDirection: 'column', gap: 12 }}>
         {error && (
           <div style={{ background: 'rgba(233,68,68,0.1)', border: '1px solid rgba(233,68,68,0.3)', borderRadius: 12, padding: '12px 16px', fontSize: 13, color: 'var(--red)', textAlign: 'center' }}>

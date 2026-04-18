@@ -70,6 +70,13 @@ export default function Queue() {
         {user?.is_admin && (
           <div style={{ display: 'flex', gap: 8 }}>
             <button onClick={handleScan} style={{ width: 36, height: 36, borderRadius: 18, background: 'rgba(30,215,96,0.1)', border: '1px solid var(--green-dark)', color: 'var(--green)', fontSize: 16, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>🔄</button>
+            <button onClick={async () => {
+              const r = await authFetch('/api/downloads/export')
+              const blob = await r.blob()
+              const url = URL.createObjectURL(blob)
+              const a = document.createElement('a')
+              a.href = url; a.download = 'musicseerr-history.csv'; a.click()
+            }} style={{ width: 36, height: 36, borderRadius: 18, background: 'rgba(74,159,255,0.1)', border: '1px solid rgba(74,159,255,0.3)', color: '#4a9fff', fontSize: 16, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>📥</button>
             <button onClick={handleClear} style={{ width: 36, height: 36, borderRadius: 18, background: 'rgba(233,68,68,0.1)', border: '1px solid rgba(233,68,68,0.3)', color: 'var(--red)', fontSize: 16, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>🗑️</button>
           </div>
         )}
