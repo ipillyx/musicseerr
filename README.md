@@ -1,27 +1,74 @@
 # 🎵 MusicSeerr
 
-A self-hosted music request app — the Overseerr/Jellyseerr of music. Search Spotify, request downloads for your household, and stream via Navidrome or any Subsonic-compatible player.
+> The Overseerr of music. Search Spotify, YouTube Music and SoundCloud, request downloads for your household, and stream via Navidrome or any Subsonic-compatible player.
 
-> Built as a Spotify replacement for home use. Family members search for music, click download, and it automatically appears in your music library.
+Built as a self-hosted Spotify replacement for home use. Family members search for music, click download, and it automatically appears in your music library — with album art, correct metadata and Navidrome playlists created automatically.
+
+---
+
+## Screenshots
+
+<p align="center">
+  <img src="screenshots/screenshot-search.png" width="24%" />
+  <img src="screenshots/screenshot-downloads.png" width="24%" />
+  <img src="screenshots/screenshot-discover.png" width="24%" />
+  <img src="screenshots/screenshot-admin.png" width="24%" />
+</p>
+
+*Search · Downloads · Discover · Admin*
 
 ---
 
 ## Features
 
-- 🔍 **Spotify Search** — search tracks, albums and artists by name
-- 💿 **Full Album Downloads** — download entire albums in one click
-- 🎨 **Artist Browse** — click any artist to browse their full discography
-- ⬇️ **Auto Download** — uses yt-dlp with correct Spotify metadata and album art embedded
-- 🔄 **Navidrome Auto-Scan** — library scan triggered automatically after each download
-- 📊 **Discover Page** — personalised recommendations based on Last.fm listening history
-- 🔐 **Invite Code Registration** — users need an invite code to register (like MAM)
-- 👑 **Admin Panel** — manage users, daily limits, blacklist artists/tracks
-- 🚫 **Blacklist** — block specific artists or tracks from being downloaded
-- 📈 **Daily Request Limits** — per-user configurable download limits
-- 🔁 **Retry Failed Downloads** — one-click retry on failed tracks
-- 🔔 **Discord Notifications** — webhook alerts when downloads complete or fail
-- 📱 **PWA Support** — installable on iOS and Android home screen
-- 🌙 **Dark Green Theme** — clean dark UI
+### 🔍 Search
+- **Spotify** — search tracks, albums and artists with full metadata
+- **YouTube Music** — find live versions, covers, remixes and anything not on Spotify
+- **SoundCloud** — download tracks, DJ mixes and podcasts
+- **Artist browse** — tap any artist to browse their full discography
+- **Album download** — download an entire album in one tap
+
+### 📋 Playlists
+- Import **Spotify** and **YouTube** playlists with one paste
+- Playlist **auto-monitoring** — new tracks added to your Spotify playlists are automatically downloaded every 6 hours
+- **Sync Now** button for manual refresh
+- Navidrome **M3U playlist** created automatically on import
+
+### ⬇️ Downloads
+- Downloads via **yt-dlp** with correct Spotify metadata embedded
+- **Album art** fetched and embedded from Spotify
+- **No duplicates** across all users — shared library awareness
+- **Auto-retry** failed downloads every 30 minutes
+- **Per-user history** — family members only see their own requests
+- **Export** full download history as CSV
+- Filter by status: Queued · Downloading · Completed · Failed
+
+### ✨ Discover
+- Personalised **Last.fm recommendations** based on your listening history
+- **For You** — tracks from similar artists
+- **Recent Plays** — your scrobble history
+- **Your Stats** — top tracks and artists by time period
+- **Trending** — most requested tracks across all users
+
+### 👑 Admin
+- **Storage stats** — music folder size, MP3 count, disk usage
+- **Download quality** — Best / 320k / 192k / 128k
+- **User management** — set per-user daily request limits
+- **Blacklist** — block artists or tracks from being downloaded
+- **yt-dlp auto-update** — daily updates to prevent YouTube breakage
+- **Manual Navidrome scan** — trigger library refresh instantly
+- **Invite code** management
+
+### 🔐 Auth
+- Invite code registration — users need a code to join
+- First registered user is automatically admin
+- JWT-based auth with 30 day sessions
+- Daily request limits per user
+
+### 📱 Mobile
+- Mobile-first UI with bottom navigation
+- PWA support — installable on iOS and Android home screen
+- Large touch targets throughout
 
 ---
 
@@ -33,12 +80,6 @@ A self-hosted music request app — the Overseerr/Jellyseerr of music. Search Sp
 - Optionally: Navidrome for streaming, Last.fm for recommendations
 
 ---
-
-## Screenshots
-
-![Search](screenshots/search.png)
-![Downloads](screenshots/downloads.png)
-![Discover](screenshots/discover.png)
 
 ## Quick Start
 
@@ -60,7 +101,7 @@ nano .env
 
 ```env
 # Required
-SECRET_KEY=your-random-secret-key
+SECRET_KEY=your-random-secret-key        # openssl rand -hex 32
 INVITE_CODE=YOURCODE
 SPOTIFY_CLIENT_ID=your-spotify-client-id
 SPOTIFY_CLIENT_SECRET=your-spotify-client-secret
@@ -82,23 +123,23 @@ LASTFM_USER=your-lastfm-username
 MAX_DAILY_REQUESTS=50
 ```
 
-### 4. Set your music folder path
+### 4. Set your music folder
 
-Edit `docker-compose.yml` and update the music volume to point to your music folder:
+Edit `docker-compose.yml` and update the music volume:
 
 ```yaml
 volumes:
   - musicseerr-data:/data
-  - /path/to/your/music:/music    # ← change this
+  - /path/to/your/music:/music    # change this
 ```
 
-### 5. Build and start
+### 5. Build and run
 
 ```bash
 docker compose up -d --build
 ```
 
-First build takes around 5 minutes — it installs ffmpeg, yt-dlp and all dependencies.
+First build takes around 5 minutes — installs ffmpeg, yt-dlp and all dependencies.
 
 ### 6. Open in your browser
 
@@ -106,37 +147,39 @@ First build takes around 5 minutes — it installs ffmpeg, yt-dlp and all depend
 http://your-server-ip:8810
 ```
 
-- Go to `/register` and create your account — **first registered user is automatically admin**
-- Share your `INVITE_CODE` with family/household so they can register
+- Register at `/register` — **first user is automatically admin**
+- Share your `INVITE_CODE` with family so they can register
 
 ---
 
 ## Spotify API Setup
 
-MusicSeerr needs a Spotify API key to search for music. It is free and takes 2 minutes:
-
 1. Go to [developer.spotify.com/dashboard](https://developer.spotify.com/dashboard)
 2. Click **Create App**
-3. Fill in any name, set the redirect URI to `http://localhost`
-4. Copy your **Client ID** and **Client Secret** into `.env`
+3. Set the redirect URI to `http://localhost`
+4. Copy **Client ID** and **Client Secret** into `.env`
 
 ---
 
 ## Navidrome Integration
 
-When `NAVIDROME_URL`, `NAVIDROME_USER` and `NAVIDROME_PASS` are set, MusicSeerr will automatically trigger a Navidrome library scan after each successful download so tracks appear in your player immediately without needing a manual scan.
+When `NAVIDROME_URL`, `NAVIDROME_USER` and `NAVIDROME_PASS` are set:
+
+- Library scan triggered automatically after each download
+- Playlists created as M3U files and auto-imported into Navidrome
+- Monitored Spotify playlists sync new tracks and update playlists automatically
 
 ---
 
 ## Last.fm Recommendations
 
-Set `LASTFM_API_KEY` and `LASTFM_USER` to unlock the **Discover** page:
+Set `LASTFM_API_KEY` and `LASTFM_USER` to unlock the Discover page:
 
 | Tab | Description |
 |-----|-------------|
-| ✨ For You | Tracks from similar artists based on your Last.fm listening history |
+| ✨ For You | Tracks from similar artists based on your Last.fm history |
 | 🎵 Recent Plays | Your recent scrobble history |
-| 📊 Your Stats | Top tracks and artists by time period (7 days → all time) |
+| 📊 Your Stats | Top tracks and artists by time period |
 | 🆕 Library | Recently downloaded to your library |
 | 🔥 Trending | Most requested tracks across all users |
 
@@ -144,34 +187,57 @@ Get a free Last.fm API key at [last.fm/api/account/create](https://www.last.fm/a
 
 ---
 
-## File Organisation
+## Homepage Dashboard Widget
 
-Downloads are saved as:
+MusicSeerr exposes a public stats endpoint for use with [Homepage](https://gethomepage.dev):
 
+```yaml
+- MusicSeerr:
+    icon: https://your-server/icon-192x192.png
+    href: http://your-server:8810
+    description: Music download requests
+    widget:
+      type: customapi
+      url: http://your-server:8810/api/public/stats
+      refreshInterval: 60000
+      mappings:
+        - field: completed
+          label: Downloaded
+          format: number
+        - field: queued
+          label: In Queue
+          format: number
+        - field: users
+          label: Users
+          format: number
 ```
-/music/Artist Name/Album Name/Track Name.mp3
-```
-
-Metadata (title, artist, album, artwork) is embedded using Spotify data so your library is correctly tagged.
 
 ---
 
-## Admin Features
+## Playlist Monitoring
 
-| Feature | Description |
-|---------|-------------|
-| User management | View and remove users |
-| Daily limits | Set per-user daily download limits |
-| Blacklist | Block artists or track names from being downloaded |
-| Clear history | Bulk delete completed/failed download history |
-| Navidrome scan | Manually trigger a library scan |
-| Invite code | Change the registration invite code |
+Import a Spotify or YouTube playlist and MusicSeerr will:
+
+1. Download all tracks immediately
+2. Create a Navidrome playlist automatically
+3. Check the playlist every 6 hours for new tracks
+4. Auto-download any new additions
+
+Use the **Playlist** tab → **Saved** to see all monitored playlists and trigger manual syncs.
 
 ---
 
-## Reverse Proxy
+## iOS / Android
 
-To expose MusicSeerr publicly (e.g. `music.yourdomain.com`), add a proxy host in Nginx Proxy Manager or Traefik pointing to port `8810`. Enable WebSocket support.
+MusicSeerr is a PWA — install it as an app:
+
+1. Open Safari/Chrome and go to your MusicSeerr URL
+2. Tap **Share** → **Add to Home Screen**
+3. Tap **Add**
+
+For listening to your library on mobile, use any Subsonic-compatible app pointed at your Navidrome server:
+- **Substreamer** (iOS/Android) — free
+- **Symfonium** (Android) — paid, excellent
 
 ---
 
@@ -200,7 +266,7 @@ docker compose up -d --build
 
 ## Contributing
 
-PRs and issues welcome!
+PRs and issues welcome! This started as a personal homelab project.
 
 ---
 
