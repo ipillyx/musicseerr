@@ -45,7 +45,7 @@ export default function Layout() {
       <img src="/icon-192x192.png" alt="MusicSeerr" style={{ width: 32, height: 32, borderRadius: 10 }} />
       <div>
         <div style={{ fontSize: isMobile ? 17 : 18, fontWeight: 800, color: 'var(--green)', letterSpacing: '-0.5px', lineHeight: 1 }}>MusicSeerr</div>
-        <div style={{ fontSize: 9, color: 'var(--text-muted)', fontFamily: 'DM Mono', marginTop: 1 }}>pilly.uk</div>
+        <div style={{ fontSize: 9, color: 'var(--text-muted)', fontFamily: 'DM Mono', marginTop: 1 }}>self-hosted</div>
       </div>
     </div>
   )
